@@ -2,9 +2,10 @@
   "name": "personal-assistant",
   "type": "module",
   "scripts": {
-    "dev": "tsx watch src/index.ts",
+    "dev": "tsx watch --env-file=.env src/index.ts",
     "build": "tsc",
-    "start": "node dist/index.js"
+    "start": "node dist/index.js",
+    "set-webhook": "tsx --env-file=.env scripts/set-webhook.ts"
   },
   "dependencies": {
     "@hono/node-server": "^2.1.3",
