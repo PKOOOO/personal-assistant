@@ -4,22 +4,32 @@ import type { GetStepTools, Inngest } from 'inngest'
 import type { TranscriptEntry } from './transcript.js'
 import { webTools, webToolsEnabled } from './web-tools.js'
 
-// Cheapest current Claude model, fine for a chat bot.
+// Claude Sonnet 5.5: strong at tool use and everyday assistant work, at
+// $2 / $10 per MTok.
 // AgentKit calls the model through `step.ai.infer`, so Inngest makes the
 // request to Anthropic on our behalf (the key is sent to Inngest for that).
+//
+// Thinking: Sonnet 5.5 always returns `thinking` blocks (it can't disable
+// thinking). AgentKit 0.13's Anthropic parser crashed on them, so it is patched
+// to skip unknown blocks (patches/@inngest+agent-kit+0.13.2.patch, re-applied
+// by `postinstall`). AgentKit doesn't send thinking blocks back; the API accepts
+// a history with all thinking blocks removed, and the model thinks afresh.
 const model = anthropic({
-  model: 'claude-haiku-5-5',
+  model: 'claude-sonnet-5-5',
   // .env stores the key as CLAUDE_API_KEY; fall back to the SDK's default env var.
   apiKey: process.env.CLAUDE_API_KEY ?? process.env.ANTHROPIC_API_KEY,
+  // Server-side refusal fallback: if Sonnet 5.5's safety classifiers decline
+  // a request, the API retries it on a fallback model in the same call.
+  betaHeaders: ['server-side-fallback-2026-07-01'],
+  // Merged into the request body by the model's onCall hook.
   defaultParameters: {
-    max_tokens: 4096,
-    // Thinking off: AgentKit 0.13's Anthropic response parser crashes on
-    // `thinking` content blocks (no case for them in its reducer), which Haiku
-    // 5.5 returns by default before tool calls. Haiku 5.5 accepts "disabled"
-    // at effort high or below; effort is pinned explicitly to keep it valid.
-    // These fields are merged into the request body by the model's onCall hook.
-    thinking: { type: 'disabled' },
+    // Room for thinking plus the reply.
+    max_tokens: 16000,
+    thinking: { type: 'adaptive' },
+    // Sonnet 5.5 defaults to high; medium is the suggested start for
+    // multi-step tool use and keeps chat replies quick.
     output_config: { effort: 'medium' },
+    fallbacks: 'default',
   } as { max_tokens: number },
 })
 
@@ -38,7 +48,6 @@ How to choose:
 - Structured, live data from a specific kind of site (bookings, listings, prices, odds, financials, reviews, jobs): call find_data_sources, then get_data_source_details for the best match, then fetch_live_data with exactly the inputs it needs. Some sources need a lookup first, for example a city's coordinates or an ID from another capability of the same provider; follow the descriptions.
 - News, general facts, opening hours, anything else: search_web, then read_webpage if an excerpt isn't enough. Use search_web as the fallback when no data source fits or one fails.
 - A URL from the user: read_webpage.
-When you use a tool, you may say a brief sentence first. If no tool can express what the user asked for, say so instead of guessing. Do not include internal or system XML tags in your response.
 Make as few calls as you need. If something essential is missing and you can't guess it sensibly (for example the city for a restaurant search), ask one short question instead of looking anything up. Otherwise pick a sensible default (party of 2, the next few days, the user's likely city from the chat) and say what you assumed.
 
 # Talking about what you found
