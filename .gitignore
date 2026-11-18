@@ -29,5 +29,3 @@ lerna-debug.log*
 .firecrawl/
 .neon
 
-# trigger.dev
-.trigger

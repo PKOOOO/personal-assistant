@@ -10,12 +10,11 @@
     ],
     "jsx": "react-jsx",
     "jsxImportSource": "hono/jsx",
-    "rootDir": ".",
+    "rootDir": "./src",
     "outDir": "./dist"
   },
   "include": [
-    "src",
-    "trigger.config.ts"
+    "src"
   ],
   "exclude": [
     "node_modules"
