@@ -26,7 +26,8 @@ Local development:
 Status and next steps:
 
 1. Done (2026-11-18): verified through the `inngest-dev` MCP tools. The app and `generate-response` are registered, `invoke_function` ran it, and `get_run` / `get_run_trace` showed the run Completed with the Claude reply in `output`. `invoke_function_sync` fails with "function was not triggered by invoke event"; use `invoke_function` and then `poll_run_status` / `get_run` instead. If `get_apps` shows the last sync as `unreachable`, the app isn't running on port 3000.
-2. Production (not done yet): sync `https://<railway-domain>/api/inngest` in Inngest Cloud; the user sets `INNGEST_EVENT_KEY` and `INNGEST_SIGNING_KEY` on Railway.
+2. Done (2026-11-18): production runs on Inngest Cloud. Railway has `INNGEST_EVENT_KEY` and `INNGEST_SIGNING_KEY`; the app is synced at `https://personal-assistant-production-b793.up.railway.app/api/inngest` (an unsigned GET returns `Unauthorized`, as expected). A `/test/ai` request on production completed with the Claude reply in `output`.
+3. Open: `/test/ai` is still deployed publicly with no auth (each call is a paid Claude request). The user chose to keep it for now; remove it or restrict it to dev when testing is done.
 
 ## Railway environment variables
 
