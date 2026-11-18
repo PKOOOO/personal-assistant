@@ -1,5 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { inngest } from './client.js'
+import { telegramChat } from './telegram.js'
 
 // .env stores the key as CLAUDE_API_KEY; fall back to the SDK's default env var.
 const anthropic = new Anthropic({
@@ -45,4 +46,4 @@ export const generateResponse = inngest.createFunction(
   }
 )
 
-export const functions = [generateResponse]
+export const functions = [generateResponse, telegramChat]

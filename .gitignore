@@ -29,3 +29,5 @@ lerna-debug.log*
 .firecrawl/
 .neon
 
+# local conversation transcripts (src/agent/transcript.ts)
+data/

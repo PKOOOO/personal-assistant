@@ -17,6 +17,15 @@ Inngest setup (SDK `inngest` v4):
 - `src/test-ai.ts`: TEMPORARY public `GET /test/ai?prompt=...`; sends the event and waits for the run. Remove when testing is done.
 - Use v4 APIs only: `createFunction({ id, triggers: [{ event }] }, handler)`. Check `node_modules/inngest` before using an API you're unsure of.
 
+Telegram bot (Inngest webhook + AgentKit chat agent):
+
+- Flow: Telegram -> Inngest Cloud webhook `https://inn.gs/e/<key>` -> transform `inngest/webhooks/telegram-transform.js` (pasted into the dashboard; keep the repo copy in sync) -> event `telegram/update.received` -> function `telegram-chat` in `src/inngest/telegram.ts`. The app has no Telegram route any more.
+- The function checks `data.secretToken` against `TELEGRAM_WEBHOOK_SECRET` (NonRetriableError on mismatch), runs one turn per chat at a time (concurrency key = chat id), and sends replies with `src/telegram/api.ts`.
+- Agent: `src/agent/assistant.ts`, `@inngest/agent-kit` `createAgent` with `anthropic({ model: 'claude-haiku-5-5' })`. Model calls go through `step.ai.infer` (Inngest makes the Anthropic request, so the key is sent to Inngest).
+- Memory: `src/agent/transcript.ts`, one JSONL file per chat in `TRANSCRIPT_DIR` (default `./data/transcripts`, gitignored); last 40 messages go to the model. AgentKit's HistoryConfig is deliberately not used: for a standalone agent it puts history after the new message and drops past user messages. On Railway, `TRANSCRIPT_DIR` must be on a mounted volume or memory is wiped on each deploy: production has volume `transcripts` (5 GB, us-west2) mounted at `/data`, with `TRANSCRIPT_DIR=/data/transcripts` (set 2026-11-18). A volume limits the service to one replica.
+- Register: `npm run set-webhook -- https://inn.gs/e/<key>`.
+- Local test: send `telegram/update.received` to the Dev Server (`POST http://localhost:8288/e/test`) with a fake update and the real secret; `send-reply` fails for a fake chat id, but the trace and transcript show the rest.
+
 Local development:
 
 - Inngest Dev Server: `npx inngest-cli@latest dev` (http://localhost:8288; MCP at http://localhost:8288/mcp, configured in Claude Code as `inngest-dev`).
