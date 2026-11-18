@@ -48,6 +48,7 @@ How to choose:
 - Structured, live data from a specific kind of site (bookings, listings, prices, odds, financials, reviews, jobs): call find_data_sources, then get_data_source_details for the best match, then fetch_live_data with exactly the inputs it needs. Some sources need a lookup first, for example a city's coordinates or an ID from another capability of the same provider; follow the descriptions.
 - News, general facts, opening hours, anything else: search_web, then read_webpage if an excerpt isn't enough. Use search_web as the fallback when no data source fits or one fails.
 - A URL from the user: read_webpage.
+- Local places (restaurants, cafés, bars, shops, salons, clinics, any business with an address), anywhere in the world: use the maps business search data source (find_data_sources with something like "businesses on maps with ratings, hours and phone in <area>"). It covers many countries the booking sites don't, and returns ratings, review counts, today's opening hours, phone numbers and map links. Booking sites like Resy cover mainly the US and Europe; when no booking source covers the area, use the maps results for the shortlist (filter by the rating asked for, check the opening hours against the requested time), give the phone numbers, and offer to draft a short booking message for phone or WhatsApp.
 Make as few calls as you need. If something essential is missing and you can't guess it sensibly (for example the city for a restaurant search), ask one short question instead of looking anything up. Otherwise pick a sensible default (party of 2, the next few days, the user's likely city from the chat) and say what you assumed.
 
 # Talking about what you found
@@ -67,7 +68,31 @@ function systemPrompt() {
   const tools = webToolsEnabled()
     ? ''
     : '\n\n# Note\nLive lookups are unavailable right now. If a request needs current information, say you cannot check it at the moment.'
-  return `${BASE_PROMPT}${tools}\n\nToday is ${date}; the time is ${time} UTC. Resolve "today", "tonight" and "this weekend" from this date, in the user's local time when you know it.`
+  return `${BASE_PROMPT}${tools}
+
+# Date and time
+It is now ${date} ${time} UTC. Users are rarely on UTC: before resolving "today", "tonight", "tomorrow" or "this weekend", pick the user's UTC offset (from a place they live in or ask about, e.g. Mombasa/Nairobi is UTC+3, London UTC+0, New York UTC-5, India UTC+5:30; or a timezone mentioned in this chat or returned by a maps result) and read their local date and time from this table. Don't calculate it yourself.
+${localTimeTable(now)}
+State the local date you used, e.g. "tomorrow, Fri 20 Nov". Between midnight and 4am local time, "tomorrow" is ambiguous: people up late often mean the coming daytime (the current local date), not the day after. Take the current local date, and name both dates plainly, e.g. "It's just after midnight in Mombasa, so I took tomorrow as Thu 19 Nov; if you meant Fri 20 Nov, tell me." If you can't tell the user's timezone and it changes the answer, ask.`
+}
+
+// Current local date and time for each common UTC offset, so the model reads
+// the user's local time instead of doing timezone arithmetic (which it gets
+// wrong near midnight).
+const OFFSETS = [-8, -7, -6, -5, -4, -3, 0, 1, 2, 3, 4, 5, 5.5, 7, 8, 9, 10, 12]
+
+function localTimeTable(now: Date) {
+  return OFFSETS.map((h) => {
+    const local = new Date(now.getTime() + h * 3_600_000)
+    const label = `UTC${h >= 0 ? '+' : '-'}${Math.trunc(Math.abs(h))}${h % 1 ? ':30' : ''}`
+    const day = local.toLocaleDateString('en-GB', {
+      weekday: 'short',
+      day: 'numeric',
+      month: 'short',
+      timeZone: 'UTC',
+    })
+    return `- ${label}: ${day}, ${local.toISOString().slice(11, 16)}`
+  }).join('\n')
 }
 
 /** Joins the assistant's text output from one model call. */
