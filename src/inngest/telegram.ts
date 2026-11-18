@@ -6,7 +6,7 @@
 import { NonRetriableError } from 'inngest'
 import { timingSafeEqual } from 'hono/utils/buffer'
 import { inngest } from './client.js'
-import { createChatAgent, replyText } from '../agent/assistant.js'
+import { answer } from '../agent/assistant.js'
 import { appendTranscript, loadTranscript } from '../agent/transcript.js'
 import { callTelegram, chunk, type TelegramUpdate } from '../telegram/api.js'
 
@@ -74,9 +74,10 @@ export const telegramChat = inngest.createFunction(
 
     const transcript = await step.run('load-transcript', () => loadTranscript(chatId))
 
-    // One durable step.ai.infer call, named after the agent.
-    const result = await createChatAgent(transcript).run(userText)
-    const reply = replyText(result) || "Sorry, I couldn't come up with a reply."
+    // Durable step.ai.infer calls (named after the agent), plus one step per
+    // web/data lookup the model makes.
+    const reply =
+      (await answer(transcript, userText, step)) || "Sorry, I couldn't come up with a reply."
 
     await step.run('save-transcript', () => {
       const ts = new Date().toISOString()

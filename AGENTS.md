@@ -14,14 +14,15 @@ Inngest setup (SDK `inngest` v4):
 - `src/inngest/client.ts`: client, id `personal-assistant`.
 - `src/inngest/functions.ts`: `generate-response`, triggered by event `ai/response.requested` with `data.prompt`; one durable step `ask-claude` calls Claude Haiku. Add new functions to the exported `functions` array.
 - `src/app.ts`: serves functions at `/api/inngest` (`inngest/hono`).
-- `src/test-ai.ts`: TEMPORARY public `GET /test/ai?prompt=...`; sends the event and waits for the run. Remove when testing is done.
 - Use v4 APIs only: `createFunction({ id, triggers: [{ event }] }, handler)`. Check `node_modules/inngest` before using an API you're unsure of.
 
 Telegram bot (Inngest webhook + AgentKit chat agent):
 
 - Flow: Telegram -> Inngest Cloud webhook `https://inn.gs/e/<key>` -> transform `inngest/webhooks/telegram-transform.js` (pasted into the dashboard; keep the repo copy in sync) -> event `telegram/update.received` -> function `telegram-chat` in `src/inngest/telegram.ts`. The app has no Telegram route any more.
 - The function checks `data.secretToken` against `TELEGRAM_WEBHOOK_SECRET` (NonRetriableError on mismatch), runs one turn per chat at a time (concurrency key = chat id), and sends replies with `src/telegram/api.ts`.
-- Agent: `src/agent/assistant.ts`, `@inngest/agent-kit` `createAgent` with `anthropic({ model: 'claude-haiku-5-5' })`. Model calls go through `step.ai.infer` (Inngest makes the Anthropic request, so the key is sent to Inngest).
+- Agent: `src/agent/assistant.ts`, `@inngest/agent-kit` `createAgent` with `anthropic({ model: 'claude-haiku-5-5' })`. Model calls go through `step.ai.infer` (Inngest makes the Anthropic request, so the key is sent to Inngest). `answer()` drives the tool loop itself (max 8 model calls per message).
+- AgentKit 0.13 pitfalls (all handled in `assistant.ts`, keep them in mind when changing it): standalone `agent.run` defaults to `maxIter: 0` and on later iterations drops tool results, so each `run('')` is one model call and our `conversation` array carries tool calls + results; the Anthropic response parser crashes on `thinking` blocks, so thinking is disabled via `defaultParameters` (merged into the body by the model's `onCall`); tools only get `step` if `run('', { step })` is passed, otherwise lookups repeat on every replay.
+- Web tools: `src/agent/web-tools.ts`, Firecrawl SDK `@mendable/firecrawl-js` with `FIRECRAWL_API_KEY`. `search_web`, `read_webpage`, and the Alexandria flow `find_data_sources` -> `get_data_source_details` -> `fetch_live_data` (live structured data: Resy, Zillow, StockX, Polymarket, jobs, ...). Each runs in its own `tool-*` step and returns errors as text. Users must never see "Firecrawl"/"Alexandria": tool descriptions avoid it and the system prompt says to name the source website. Without the key the tools are left out and the bot says it can't check live info. Some Alexandria sources need their terms accepted at https://www.firecrawl.dev/app/alexandria first.
 - Memory: `src/agent/transcript.ts`, one JSONL file per chat in `TRANSCRIPT_DIR` (default `./data/transcripts`, gitignored); last 40 messages go to the model. AgentKit's HistoryConfig is deliberately not used: for a standalone agent it puts history after the new message and drops past user messages. On Railway, `TRANSCRIPT_DIR` must be on a mounted volume or memory is wiped on each deploy: production has volume `transcripts` (5 GB, us-west2) mounted at `/data`, with `TRANSCRIPT_DIR=/data/transcripts` (set 2026-11-18). A volume limits the service to one replica.
 - Register: `npm run set-webhook -- https://inn.gs/e/<key>`.
 - Local test: send `telegram/update.received` to the Dev Server (`POST http://localhost:8288/e/test`) with a fake update and the real secret; `send-reply` fails for a fake chat id, but the trace and transcript show the rest.
@@ -30,13 +31,13 @@ Local development:
 
 - Inngest Dev Server: `npx inngest-cli@latest dev` (http://localhost:8288; MCP at http://localhost:8288/mcp, configured in Claude Code as `inngest-dev`).
 - App: `npm run dev`. The script sets `INNGEST_DEV=1`, which SDK v4 needs to use the Dev Server (it defaults to Cloud mode).
-- Known quirk: with checkpointing (the v4 default), the Dev Server REST API returns an empty `output`, so `/test/ai` returns status + `runUrl` without the reply text. The output is in the dashboard, the MCP run tools, or the Dev Server GraphQL API (`POST /v0/gql`, `run(runID) { output }`).
+- Known quirk: with checkpointing (the v4 default), the Dev Server REST API returns an empty `output`, so a run's output can't be read from the REST API. The output is in the dashboard, the MCP run tools, or the Dev Server GraphQL API (`POST /v0/gql`, `run(runID) { output }`).
 
 Status and next steps:
 
 1. Done (2026-11-18): verified through the `inngest-dev` MCP tools. The app and `generate-response` are registered, `invoke_function` ran it, and `get_run` / `get_run_trace` showed the run Completed with the Claude reply in `output`. `invoke_function_sync` fails with "function was not triggered by invoke event"; use `invoke_function` and then `poll_run_status` / `get_run` instead. If `get_apps` shows the last sync as `unreachable`, the app isn't running on port 3000.
 2. Done (2026-11-18): production runs on Inngest Cloud. Railway has `INNGEST_EVENT_KEY` and `INNGEST_SIGNING_KEY`; the app is synced at `https://personal-assistant-production-b793.up.railway.app/api/inngest` (an unsigned GET returns `Unauthorized`, as expected). A `/test/ai` request on production completed with the Claude reply in `output`.
-3. Open: `/test/ai` is still deployed publicly with no auth (each call is a paid Claude request). The user chose to keep it for now; remove it or restrict it to dev when testing is done.
+3. Done (2026-11-18): removed the temporary public `/test/ai` route.
 
 ## Railway environment variables
 
