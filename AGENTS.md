@@ -37,6 +37,12 @@ Inngest setup (SDK `inngest` v4):
 - Memory: `src/agent/transcript.ts`, one JSONL file per chat in `TRANSCRIPT_DIR` (default `./data/transcripts`, gitignored); last 40 messages go to the model. AgentKit's HistoryConfig is deliberately not used: for a standalone agent it puts history after the new message and drops past user messages. On Railway, `TRANSCRIPT_DIR` must be on a mounted volume or memory is wiped on each deploy: production has volume `transcripts` (5 GB, us-west2) mounted at `/data`, with `TRANSCRIPT_DIR=/data/transcripts`. A volume limits the service to one replica.
 - Register the webhook: `npm run set-webhook -- https://inn.gs/e/<key>`.
 
+## Database: Neon Postgres + Drizzle ORM
+
+- Neon project from `.neon` (branch `main`). Schema in `src/db/schema.ts`, client in `src/db/client.ts` (node-postgres pool on the pooled `DATABASE_URL`), config in `drizzle.config.ts` (direct URL; accepts `DATABASE_URL_UNPOOLED` or the existing misspelling `DATABASE_URL_UNPLOOLED`).
+- Don't use migrations (no `drizzle-kit generate` / `migrate`, no `drizzle/` folder). Change `src/db/schema.ts` and apply it with `npm run db:push` (`drizzle-kit push`).
+- Tables: `channel_identifiers` (platform, external_id, clerk_user_id, linked_at; unique on platform + external_id) links a Telegram user to a Clerk user. Not used by the code yet.
+
 ## Local development and testing
 
 - Inngest Dev Server: `npx inngest-cli@latest dev --no-discovery -u http://localhost:3000/api/inngest` (http://localhost:8288; MCP at http://localhost:8288/mcp, configured in Claude Code as `inngest-dev`). If the app was started after the Dev Server, sync it with `curl -X PUT localhost:3000/api/inngest`.
