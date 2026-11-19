@@ -31,7 +31,7 @@ export const webToolsEnabled = () => Boolean(process.env.FIRECRAWL_API_KEY)
 // answers; the model is told when a result was cut.
 const MAX_RESULT_CHARS = 12_000
 
-function clip(value: unknown): string {
+export function clip(value: unknown): string {
   const text = typeof value === 'string' ? value : JSON.stringify(value)
   return text.length <= MAX_RESULT_CHARS
     ? text
@@ -46,7 +46,7 @@ type StepTools = { run: <T>(id: string, fn: () => Promise<T>) => Promise<unknown
  * coverage), not thrown: a thrown step error would make Inngest retry with
  * backoff and delay the Telegram reply for minutes.
  */
-async function durable(step: unknown, id: string, fn: () => Promise<string>): Promise<string> {
+export async function durable(step: unknown, id: string, fn: () => Promise<string>): Promise<string> {
   const safe = async () => {
     try {
       return await fn()

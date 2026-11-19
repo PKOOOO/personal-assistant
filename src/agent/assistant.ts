@@ -3,6 +3,8 @@ import { anthropic, createAgent, type AgentResult, type Message } from '@inngest
 import type { GetStepTools, Inngest } from 'inngest'
 import type { TranscriptEntry } from './transcript.js'
 import { webTools, webToolsEnabled } from './web-tools.js'
+import { sandboxEnabled } from './sandbox.js'
+import { sandboxTools, type SandboxToolContext } from './sandbox-tools.js'
 
 // Claude Sonnet 5.5: strong at tool use and everyday assistant work, at
 // $2 / $10 per MTok.
@@ -35,8 +37,9 @@ const model = anthropic({
 
 // Model calls per user message. Each call may run several tools; a lookup like
 // "find a table tonight" typically takes 3-5 calls (find source, read inputs,
-// resolve location, search, maybe check availability).
-const MAX_MODEL_CALLS = 8
+// resolve location, search, maybe check availability); file work takes more
+// (inspect, write a script, run it, check the result, send it).
+const MAX_MODEL_CALLS = 12
 
 const BASE_PROMPT = `You are a personal assistant that people chat with on Telegram. You remember earlier messages in this chat.
 
@@ -51,6 +54,13 @@ How to choose:
 - Local places (restaurants, cafés, bars, shops, salons, clinics, any business with an address), anywhere in the world: use the maps business search data source (find_data_sources with something like "businesses on maps with ratings, hours and phone in <area>"). It covers many countries the booking sites don't, and returns ratings, review counts, today's opening hours, phone numbers and map links. Booking sites like Resy cover mainly the US and Europe; when no booking source covers the area, use the maps results for the shortlist (filter by the rating asked for, check the opening hours against the requested time), give the phone numbers, and offer to draft a short booking message for phone or WhatsApp.
 - Travel and tickets with no data source for the route (intercity buses, ferries, regional trains, events): find the main booking site for that country or route (search_web, e.g. "Mombasa to Busia bus booking"; in Kenya, Buupass at https://buupass.com/<From>-to-<To>, e.g. https://buupass.com/Mombasa-to-Busia), and read its route or search results page with read_webpage before using anything else. Report the departures, seats left, classes and fares it lists. These pages often show one default date: check which date the page shows, and if it isn't the date asked for, say so plainly ("Buupass shows Fri 20 Nov; for today, check the link or call the operator") instead of presenting those times as the requested day's.
 Make as few calls as you need. If something essential is missing and you can't guess it sensibly (for example the city for a restaurant search), ask one short question instead of looking anything up. Otherwise pick a sensible default (party of 2, the next few days, the user's likely city from the chat) and say what you assumed.
+
+# Files and your computer
+You have your own Linux computer for this chat, with the tools run_command, write_file, look_at_file and send_file. Files the user sends are saved on it, and their message lists where (for example "inbox/contract.pdf"); files stay there for later messages in this chat.
+- Use it to read, convert, edit and create files: PDFs, images, Word and Excel documents, CSVs, charts, scripts. Read a PDF's text with pymupdf before answering questions about it; look at images and scans with look_at_file.
+- When the user wants a file back, make it and deliver it with send_file. You can send files, so never tell the user you can't. Write the result to a new file with a clear name and keep the original.
+- Check your work before sending: run the script, and use look_at_file on visual results (a page you edited, a chart, an image) to confirm it looks right.
+- Never mention sandboxes, Daytona or tool names; to the user you simply opened, edited or made the file.
 
 # Talking about what you found
 - Never mention tools, data sources, providers, APIs, "Firecrawl", "Alexandria", credits or how lookups work. To the user you simply checked: name the website the information came from, e.g. "I checked Resy just now" or "according to Zillow".
@@ -67,9 +77,13 @@ function systemPrompt() {
   const now = new Date()
   const date = now.toISOString().slice(0, 10)
   const time = now.toISOString().slice(11, 16)
-  const tools = webToolsEnabled()
-    ? ''
-    : '\n\n# Note\nLive lookups are unavailable right now. If a request needs current information, say you cannot check it at the moment.'
+  const notes = [
+    !webToolsEnabled() &&
+      'Live lookups are unavailable right now. If a request needs current information, say you cannot check it at the moment.',
+    !sandboxEnabled() &&
+      'Your computer is unavailable right now: you cannot open, edit or send files. Say so if a request needs it.',
+  ].filter(Boolean)
+  const tools = notes.length ? `\n\n# Note\n${notes.join('\n')}` : ''
   return `${BASE_PROMPT}${tools}
 
 # Date and time
@@ -130,7 +144,10 @@ export async function answer(
   // The Inngest function's step tools. AgentKit only hands `step` to tool
   // handlers when it is passed to run(); without it, lookups run outside
   // steps and are repeated (and paid for again) on every function replay.
-  step: GetStepTools<Inngest.Any>
+  step: GetStepTools<Inngest.Any>,
+  // The Telegram chat this turn belongs to: its sandbox, and where send_file
+  // delivers files. sentFiles is filled in as files are sent.
+  chat: SandboxToolContext
 ): Promise<string> {
   const conversation: Message[] = [
     ...transcript.map((e): Message => ({ type: 'text', role: e.role, content: e.content })),
@@ -141,7 +158,10 @@ export async function answer(
     name: 'telegram-assistant',
     system: systemPrompt(),
     model,
-    tools: webToolsEnabled() ? webTools : [],
+    tools: [
+      ...(webToolsEnabled() ? webTools : []),
+      ...(sandboxEnabled() ? sandboxTools(chat) : []),
+    ],
     lifecycle: {
       // agent.run('') builds a prompt of just [system]; append the conversation.
       onStart: ({ prompt }) => ({
@@ -165,7 +185,7 @@ export async function answer(
         type: 'text',
         role: 'user',
         content:
-          '(System note: no more lookups are possible for this message. Answer now from what you found, and say what you could not check.)',
+          '(System note: no more tool calls are possible for this message. Answer now from what you have, and say what you could not finish.)',
       })
     }
   }

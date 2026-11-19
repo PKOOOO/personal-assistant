@@ -8,7 +8,15 @@ import { timingSafeEqual } from 'hono/utils/buffer'
 import { inngest } from './client.js'
 import { answer } from '../agent/assistant.js'
 import { appendTranscript, loadTranscript } from '../agent/transcript.js'
-import { callTelegram, chunk, type TelegramUpdate } from '../telegram/api.js'
+import { chatSandbox, INBOX, safeFileName, sandboxEnabled, WORKDIR } from '../agent/sandbox.js'
+import {
+  callTelegram,
+  chunk,
+  downloadTelegramFile,
+  getAttachments,
+  TELEGRAM_MAX_DOWNLOAD,
+  type TelegramUpdate,
+} from '../telegram/api.js'
 
 type UpdateEventData = {
   update: TelegramUpdate
@@ -55,18 +63,72 @@ export const telegramChat = inngest.createFunction(
       chat_id: chatId,
       message_thread_id: message.message_thread_id,
     }
-    const userText = message.text ?? message.caption
+    const text = message.text ?? message.caption ?? ''
+    const attachments = getAttachments(message)
 
-    if (!userText) {
+    if (!text && attachments.length === 0) {
       await step.run('reply-unsupported', () =>
         callTelegram('sendMessage', {
           ...target,
-          text: 'I can only read text messages for now.',
+          text: 'I can read text messages and files (documents, photos, audio, video), but not this kind of message.',
           reply_parameters: { message_id: message.message_id },
         })
       )
-      return { skipped: 'no text' }
+      return { skipped: 'unsupported message type' }
     }
+
+    if (attachments.length > 0 && !sandboxEnabled()) {
+      await step.run('reply-files-unavailable', () =>
+        callTelegram('sendMessage', {
+          ...target,
+          text: "I can't open files right now. Please paste the text instead.",
+          reply_parameters: { message_id: message.message_id },
+        })
+      )
+      return { skipped: 'file tools not configured' }
+    }
+
+    // Copy the user's files from Telegram into the chat's sandbox. The bytes
+    // stay inside this step; only names and sizes are saved as its result.
+    const saved =
+      attachments.length === 0
+        ? []
+        : await step.run('save-attachments', async () => {
+            const sandbox = await chatSandbox(chatId)
+            const results: { path?: string; name: string; size?: number; mimeType?: string; error?: string }[] = []
+            for (const a of attachments) {
+              if (a.size && a.size > TELEGRAM_MAX_DOWNLOAD) {
+                results.push({ name: a.name, error: "over 20 MB, Telegram's limit for bots" })
+                continue
+              }
+              try {
+                const bytes = await downloadTelegramFile(a.fileId)
+                let name = safeFileName(a.name)
+                // Don't overwrite an earlier file with the same name.
+                const exists = await sandbox.process.executeCommand(`test -e '${INBOX}/${name}'`)
+                if (exists.exitCode === 0) name = `${message.message_id}-${name}`
+                await sandbox.fs.uploadFile(bytes, `${INBOX}/${name}`)
+                results.push({ path: `inbox/${name}`, name, size: bytes.length, mimeType: a.mimeType })
+              } catch (err) {
+                results.push({ name: a.name, error: err instanceof Error ? err.message : String(err) })
+              }
+            }
+            return results
+          })
+
+    // What the model (and the transcript) sees: the user's words plus where
+    // their files are, relative to the sandbox working directory.
+    const fileNotes = saved.map((f) =>
+      f.path
+        ? `- ${f.path} (${formatSize(f.size ?? 0)}${f.mimeType ? `, ${f.mimeType}` : ''})`
+        : `- ${f.name}: could not be received (${f.error})`
+    )
+    const userText = [
+      text || (saved.length ? '(The user sent a file without a message.)' : ''),
+      fileNotes.length ? `[Files the user sent, saved in ${WORKDIR}:\n${fileNotes.join('\n')}]` : '',
+    ]
+      .filter(Boolean)
+      .join('\n\n')
 
     await step.run('send-typing', () =>
       callTelegram('sendChatAction', { ...target, action: 'typing' }).catch(() => null)
@@ -76,14 +138,22 @@ export const telegramChat = inngest.createFunction(
 
     // Durable step.ai.infer calls (named after the agent), plus one step per
     // web/data lookup the model makes.
+    const sentFiles: string[] = []
     const reply =
-      (await answer(transcript, userText, step)) || "Sorry, I couldn't come up with a reply."
+      (await answer(transcript, userText, step, { chatId, target, sentFiles })) ||
+      (sentFiles.length ? 'Here you go.' : "Sorry, I couldn't come up with a reply.")
 
     await step.run('save-transcript', () => {
       const ts = new Date().toISOString()
       return appendTranscript(chatId, [
         { role: 'user', content: userText, ts, updateId: update.update_id },
-        { role: 'assistant', content: reply, ts, updateId: update.update_id },
+        {
+          role: 'assistant',
+          // Note sent files so later turns know what the user already has.
+          content: sentFiles.length ? `${reply}\n\n[Sent files: ${sentFiles.join(', ')}]` : reply,
+          ts,
+          updateId: update.update_id,
+        },
       ])
     })
 
@@ -100,6 +170,10 @@ export const telegramChat = inngest.createFunction(
       return { parts: parts.length }
     })
 
-    return { chatId, contextMessages: transcript.length, reply }
+    return { chatId, contextMessages: transcript.length, files: saved, sentFiles, reply }
   }
 )
+
+function formatSize(n: number) {
+  return n < 1024 ? `${n} B` : n < 1024 ** 2 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1024 ** 2).toFixed(1)} MB`
+}
