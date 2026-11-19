@@ -1,10 +1,10 @@
-// Usage: npm run set-webhook -- https://inn.gs/e/<inngest-webhook-key>
-// Points the Telegram bot at the given webhook URL (the Inngest webhook),
+// Usage: npm run set-webhook -- https://<app host>/telegram/webhook
+// Points the Telegram bot at the given webhook URL (the app's Hono route),
 // using TELEGRAM_WEBHOOK_SECRET as the secret token, then prints the result
 // of getWebhookInfo so you can check it.
 const url = process.argv[2]
 if (!url) {
-  console.error('Usage: npm run set-webhook -- https://inn.gs/e/<inngest-webhook-key>')
+  console.error('Usage: npm run set-webhook -- https://<app host>/telegram/webhook')
   process.exit(1)
 }
 
@@ -31,7 +31,7 @@ console.log(
   })
 )
 
-// Don't print the webhook URL back: it contains the Inngest webhook key.
+// Don't print the webhook URL back (an Inngest webhook URL contains its key).
 const info = (await api('getWebhookInfo')) as { result?: Record<string, unknown> }
 const { url: _url, ...rest } = info.result ?? {}
 console.log('getWebhookInfo:', { url_set: Boolean(_url), ...rest })

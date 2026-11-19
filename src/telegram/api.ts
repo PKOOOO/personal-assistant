@@ -6,7 +6,9 @@ type NamedFile = FileRef & { file_name?: string; mime_type?: string }
 
 export type TelegramMessage = {
   message_id: number
-  chat: { id: number }
+  chat: { id: number; type: 'private' | 'group' | 'supergroup' | 'channel' }
+  // The sender. Missing for messages sent on behalf of a channel.
+  from?: { id: number; is_bot: boolean }
   message_thread_id?: number
   media_group_id?: string
   text?: string

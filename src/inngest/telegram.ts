@@ -1,14 +1,17 @@
-// Telegram chat, driven by an Inngest webhook.
+// Telegram chat: runs the agent for one message from a linked user.
 //
-// Telegram -> Inngest Cloud webhook (https://inn.gs/e/<key>) -> transform
-// (inngest/webhooks/telegram-transform.js) -> event `telegram/update.received`
-// -> this function, which runs inside our app on Railway.
+// Telegram -> Hono route POST /telegram/webhook (src/app.ts), which checks the
+// secret token and looks the sender up in channel_identifiers -> event
+// `telegram/message.authorized` { update, clerkUserId } -> this function.
+// Unlinked senders get a "Connect your account" link instead (link.ts).
+//
+// Memory (transcript) and the sandbox belong to the Clerk user, not the chat.
 import { NonRetriableError } from 'inngest'
-import { timingSafeEqual } from 'hono/utils/buffer'
 import { inngest } from './client.js'
 import { answer } from '../agent/assistant.js'
 import { appendTranscript, loadTranscript } from '../agent/transcript.js'
-import { chatSandbox, INBOX, safeFileName, sandboxEnabled, WORKDIR } from '../agent/sandbox.js'
+import { INBOX, safeFileName, sandboxEnabled, userSandbox, WORKDIR } from '../agent/sandbox.js'
+import { isClerkUserId } from '../auth/clerk-device.js'
 import {
   callTelegram,
   chunk,
@@ -17,24 +20,23 @@ import {
   TELEGRAM_MAX_DOWNLOAD,
   type TelegramUpdate,
 } from '../telegram/api.js'
-
-type UpdateEventData = {
-  update: TelegramUpdate
-  // X-Telegram-Bot-Api-Secret-Token header, copied over by the transform.
-  secretToken: string | null
-}
+import {
+  isTelegramSecret,
+  routeTelegramUpdate,
+  type AuthorizedMessageEvent,
+} from '../telegram/route.js'
 
 export const telegramChat = inngest.createFunction(
   {
     id: 'telegram-chat',
-    triggers: [{ event: 'telegram/update.received' }],
-    // One run at a time per chat, so turns are answered and written to the
-    // transcript in order.
-    concurrency: [{ key: 'event.data.update.message.chat.id', limit: 1 }],
+    triggers: [{ event: 'telegram/message.authorized' }],
+    // One run at a time per user, so turns are answered and written to the
+    // user's transcript in order (also across linked Telegram accounts).
+    concurrency: [{ key: 'event.data.clerkUserId', limit: 1 }],
     retries: 3,
     // After the last retry fails, tell the user instead of going silent.
     onFailure: async ({ event, error }) => {
-      const { update } = event.data.event.data as UpdateEventData
+      const { update } = event.data.event.data as AuthorizedMessageEvent['data']
       const message = update?.message
       console.error('telegram-chat failed:', error.message)
       if (!message || error instanceof NonRetriableError) return
@@ -46,17 +48,13 @@ export const telegramChat = inngest.createFunction(
     },
   },
   async ({ event, step }) => {
-    const { update, secretToken } = event.data as UpdateEventData
-
-    // The Inngest webhook URL is public, so check the secret Telegram sends
-    // with every update (set with setWebhook's secret_token).
-    const secret = process.env.TELEGRAM_WEBHOOK_SECRET
-    if (!secret || !(await timingSafeEqual(secretToken ?? '', secret))) {
-      throw new NonRetriableError('Invalid Telegram secret token')
-    }
+    const { update, clerkUserId } = event.data as AuthorizedMessageEvent['data']
+    // The Hono route only sends this event for linked users; refuse anything
+    // else rather than run the agent without an owner.
+    if (!isClerkUserId(clerkUserId ?? '')) throw new NonRetriableError('Missing or invalid clerkUserId')
 
     const message = update?.message
-    if (!message) return { skipped: 'not a message update' }
+    if (!message || message.chat.type !== 'private') return { skipped: 'not a private message' }
 
     const chatId = message.chat.id
     const target = {
@@ -88,13 +86,13 @@ export const telegramChat = inngest.createFunction(
       return { skipped: 'file tools not configured' }
     }
 
-    // Copy the user's files from Telegram into the chat's sandbox. The bytes
+    // Copy the user's files from Telegram into the user's sandbox. The bytes
     // stay inside this step; only names and sizes are saved as its result.
     const saved =
       attachments.length === 0
         ? []
         : await step.run('save-attachments', async () => {
-            const sandbox = await chatSandbox(chatId)
+            const sandbox = await userSandbox(clerkUserId)
             const results: { path?: string; name: string; size?: number; mimeType?: string; error?: string }[] = []
             for (const a of attachments) {
               if (a.size && a.size > TELEGRAM_MAX_DOWNLOAD) {
@@ -134,18 +132,18 @@ export const telegramChat = inngest.createFunction(
       callTelegram('sendChatAction', { ...target, action: 'typing' }).catch(() => null)
     )
 
-    const transcript = await step.run('load-transcript', () => loadTranscript(chatId))
+    const transcript = await step.run('load-transcript', () => loadTranscript(clerkUserId))
 
     // Durable step.ai.infer calls (named after the agent), plus one step per
     // web/data lookup the model makes.
     const sentFiles: string[] = []
     const reply =
-      (await answer(transcript, userText, step, { chatId, target, sentFiles })) ||
+      (await answer(transcript, userText, step, { userId: clerkUserId, target, sentFiles })) ||
       (sentFiles.length ? 'Here you go.' : "Sorry, I couldn't come up with a reply.")
 
     await step.run('save-transcript', () => {
       const ts = new Date().toISOString()
-      return appendTranscript(chatId, [
+      return appendTranscript(clerkUserId, [
         { role: 'user', content: userText, ts, updateId: update.update_id },
         {
           role: 'assistant',
@@ -170,7 +168,24 @@ export const telegramChat = inngest.createFunction(
       return { parts: parts.length }
     })
 
-    return { chatId, contextMessages: transcript.length, files: saved, sentFiles, reply }
+    return { chatId, clerkUserId, contextMessages: transcript.length, files: saved, sentFiles, reply }
+  }
+)
+
+// TEMPORARY bridge for the switch-over. Until the Telegram webhook points at
+// the Hono route, updates still arrive through the Inngest webhook
+// (https://inn.gs/e/<key> + inngest/webhooks/telegram-transform.js) as
+// `telegram/update.received`. This applies the same secret check and routing
+// as the Hono route, so the old path can't reach the agent without a linked
+// account. Delete it (and the Inngest webhook) once Telegram is switched over.
+export const telegramLegacyWebhook = inngest.createFunction(
+  { id: 'telegram-legacy-webhook', triggers: [{ event: 'telegram/update.received' }], retries: 3 },
+  async ({ event, step }) => {
+    const { update, secretToken } = event.data as { update: TelegramUpdate; secretToken: string | null }
+    if (!(await isTelegramSecret(secretToken))) throw new NonRetriableError('Invalid Telegram secret token')
+    const routed = await step.run('route', () => routeTelegramUpdate(update))
+    if (routed) await step.sendEvent('forward', routed)
+    return { routed: routed?.name ?? 'ignored' }
   }
 )
 

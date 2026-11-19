@@ -1,4 +1,6 @@
-// Inngest webhook transform for Telegram Bot API updates.
+// TEMPORARY (old path): Inngest webhook transform for Telegram Bot API updates.
+// Delete once Telegram posts to the Hono route (POST /telegram/webhook); until
+// then telegram-legacy-webhook gates these events like the route does.
 //
 // Paste this function into the Telegram webhook's "Transform" editor in the
 // Inngest dashboard (Manage -> Webhooks). It runs on Inngest's servers, not in

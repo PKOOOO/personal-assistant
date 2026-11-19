@@ -145,8 +145,8 @@ export async function answer(
   // handlers when it is passed to run(); without it, lookups run outside
   // steps and are repeated (and paid for again) on every function replay.
   step: GetStepTools<Inngest.Any>,
-  // The Telegram chat this turn belongs to: its sandbox, and where send_file
-  // delivers files. sentFiles is filled in as files are sent.
+  // Whose sandbox the tools use, and the Telegram chat send_file delivers to.
+  // sentFiles is filled in as files are sent.
   chat: SandboxToolContext
 ): Promise<string> {
   const conversation: Message[] = [

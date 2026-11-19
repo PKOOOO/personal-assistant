@@ -1,4 +1,4 @@
-// Computer tools for the chat agent, backed by the chat's Daytona sandbox
+// Computer tools for the chat agent, backed by the user's Daytona sandbox
 // (see sandbox.ts): run commands, write files, look at images and PDFs, and
 // send files back to the Telegram chat.
 //
@@ -8,12 +8,14 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { createTool } from '@inngest/agent-kit'
 import { z } from 'zod'
-import { chatSandbox, resolvePath, safeFileName, WORKDIR } from './sandbox.js'
+import { userSandbox, resolvePath, safeFileName, WORKDIR } from './sandbox.js'
 import { clip, durable } from './web-tools.js'
 import { sendTelegramDocument, TELEGRAM_MAX_UPLOAD } from '../telegram/api.js'
 
 export type SandboxToolContext = {
-  chatId: number
+  // Clerk user whose sandbox the tools use.
+  userId: string
+  // The Telegram chat send_file delivers to.
   target: { chat_id: number; message_thread_id?: number }
   // Names of files sent during this turn, for the transcript.
   sentFiles: string[]
@@ -110,7 +112,7 @@ export function sandboxTools(ctx: SandboxToolContext) {
     }),
     handler: async ({ command, timeout_seconds }, { step }) =>
       durable(step, 'tool-run-command', async () => {
-        const sandbox = await chatSandbox(ctx.chatId)
+        const sandbox = await userSandbox(ctx.userId)
         // Pass the script base64-encoded so quoting can't break it; merge stderr in.
         const b64 = Buffer.from(command).toString('base64')
         const res = await sandbox.process.executeCommand(
@@ -132,7 +134,7 @@ export function sandboxTools(ctx: SandboxToolContext) {
     }),
     handler: async ({ path, content }, { step }) =>
       durable(step, 'tool-write-file', async () => {
-        const sandbox = await chatSandbox(ctx.chatId)
+        const sandbox = await userSandbox(ctx.userId)
         const full = resolvePath(path)
         await sandbox.process.executeCommand(`mkdir -p "$(dirname '${full.replace(/'/g, `'\\''`)}')"`)
         await sandbox.fs.uploadFile(Buffer.from(content, 'utf8'), full)
@@ -157,7 +159,7 @@ export function sandboxTools(ctx: SandboxToolContext) {
         if (mime !== 'application/pdf' && !IMAGE_TYPES.includes(mime as ImageType)) {
           return 'Error: only PNG, JPEG, GIF, WebP images and PDFs can be viewed. Convert the file first (e.g. render to PNG).'
         }
-        const sandbox = await chatSandbox(ctx.chatId)
+        const sandbox = await userSandbox(ctx.userId)
         const bytes = await sandbox.fs.downloadFile(full)
         const limit = mime === 'application/pdf' ? MAX_PDF_BYTES : MAX_IMAGE_BYTES
         if (bytes.length > limit) {
@@ -180,7 +182,7 @@ export function sandboxTools(ctx: SandboxToolContext) {
     handler: async ({ path, file_name, caption }, { step }) => {
       const result = await durable(step, 'tool-send-file', async () => {
         const full = resolvePath(path)
-        const sandbox = await chatSandbox(ctx.chatId)
+        const sandbox = await userSandbox(ctx.userId)
         const bytes = await sandbox.fs.downloadFile(full)
         if (bytes.length === 0) return 'Error: the file is empty.'
         if (bytes.length > TELEGRAM_MAX_UPLOAD) {

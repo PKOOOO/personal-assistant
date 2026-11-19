@@ -1,6 +1,7 @@
 // Transcript-based conversation memory, no database.
 //
-// Each Telegram chat gets one append-only JSONL file: one line per message,
+// Each Clerk user gets one append-only JSONL file, `<user_id>.jsonl`, shared by
+// every Telegram account linked to them: one line per message,
 // `{ role, content, ts, updateId }`. The agent reads the recent tail of the file
 // before replying, and the user message plus the reply are appended afterwards.
 //
@@ -9,6 +10,7 @@
 // redeploy.
 import { appendFile, mkdir, readFile } from 'node:fs/promises'
 import path from 'node:path'
+import { isClerkUserId } from '../auth/clerk-device.js'
 
 export type TranscriptEntry = {
   role: 'user' | 'assistant'
@@ -26,17 +28,17 @@ const MAX_CONTEXT_MESSAGES = 40
 const transcriptDir = () =>
   process.env.TRANSCRIPT_DIR ?? path.join(process.cwd(), 'data', 'transcripts')
 
-function transcriptPath(chatId: number) {
-  // Chat ids are integers (negative for groups); refuse anything else so the
-  // id can never be used to build a path outside the transcript directory.
-  if (!Number.isSafeInteger(chatId)) throw new Error(`Invalid chat id: ${chatId}`)
-  return path.join(transcriptDir(), `${chatId}.jsonl`)
+function transcriptPath(userId: string) {
+  // Only accept Clerk user ids, so the id can never be used to build a path
+  // outside the transcript directory.
+  if (!isClerkUserId(userId)) throw new Error(`Invalid user id: ${userId}`)
+  return path.join(transcriptDir(), `${userId}.jsonl`)
 }
 
-async function readAll(chatId: number): Promise<TranscriptEntry[]> {
+async function readAll(userId: string): Promise<TranscriptEntry[]> {
   let raw: string
   try {
-    raw = await readFile(transcriptPath(chatId), 'utf8')
+    raw = await readFile(transcriptPath(userId), 'utf8')
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') return []
     throw err
@@ -56,25 +58,25 @@ async function readAll(chatId: number): Promise<TranscriptEntry[]> {
   return entries
 }
 
-/** The most recent messages for a chat, oldest first, starting with a user turn. */
-export async function loadTranscript(chatId: number): Promise<TranscriptEntry[]> {
-  const recent = (await readAll(chatId)).slice(-MAX_CONTEXT_MESSAGES)
+/** The most recent messages for a user, oldest first, starting with a user turn. */
+export async function loadTranscript(userId: string): Promise<TranscriptEntry[]> {
+  const recent = (await readAll(userId)).slice(-MAX_CONTEXT_MESSAGES)
   // The Messages API expects the conversation to open with a user message.
   const firstUser = recent.findIndex((e) => e.role === 'user')
   return firstUser === -1 ? [] : recent.slice(firstUser)
 }
 
 /** Append messages, skipping any already written for the same update and role. */
-export async function appendTranscript(chatId: number, entries: TranscriptEntry[]) {
+export async function appendTranscript(userId: string, entries: TranscriptEntry[]) {
   const existing = new Set(
-    (await readAll(chatId)).map((e) => `${e.updateId}:${e.role}`)
+    (await readAll(userId)).map((e) => `${e.updateId}:${e.role}`)
   )
   const fresh = entries.filter((e) => !existing.has(`${e.updateId}:${e.role}`))
   if (fresh.length === 0) return
 
   await mkdir(transcriptDir(), { recursive: true })
   await appendFile(
-    transcriptPath(chatId),
+    transcriptPath(userId),
     fresh.map((e) => JSON.stringify(e)).join('\n') + '\n',
     'utf8'
   )

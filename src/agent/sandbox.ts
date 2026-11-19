@@ -1,8 +1,9 @@
-// One Daytona sandbox per Telegram chat: a small Linux computer where the agent
+// One Daytona sandbox per Clerk user: a small Linux computer where the agent
 // keeps the files a user sends, runs code on them and writes the files it sends
 // back.
 //
-// - Found by a fixed name (`pa-chat-<chatId>`), so files persist between messages.
+// - Found by a fixed name (`pa-<clerk user id>`), so files persist between
+//   messages and are shared by every Telegram account linked to the user.
 // - Stops itself after 15 idle minutes (disk kept, no CPU/RAM cost), is
 //   restarted on the next use, and is deleted after 3 days stopped.
 // - File bytes move between Telegram and the sandbox inside our app (see
@@ -11,6 +12,7 @@
 //
 // Daytona v0 SDK (`@daytona/sdk` 0.x, app.daytona.io). Needs DAYTONA_API_KEY.
 import { Daytona, type Sandbox } from '@daytona/sdk'
+import { isClerkUserId } from '../auth/clerk-device.js'
 
 export const sandboxEnabled = () => Boolean(process.env.DAYTONA_API_KEY)
 
@@ -18,7 +20,7 @@ export const sandboxEnabled = () => Boolean(process.env.DAYTONA_API_KEY)
 export const WORKDIR = '/home/daytona/work'
 export const INBOX = `${WORKDIR}/inbox`
 
-// Installed once when a chat's sandbox is created. The default image already
+// Installed once when a user's sandbox is created. The default image already
 // has Python with pypdf, Pillow, pandas and matplotlib.
 const BOOTSTRAP =
   'pip install -q pymupdf reportlab python-docx openpyxl qrcode 2>&1 | tail -3'
@@ -29,14 +31,14 @@ function daytona() {
   return (client ??= new Daytona())
 }
 
-const sandboxName = (chatId: number) => {
-  if (!Number.isSafeInteger(chatId)) throw new Error(`Invalid chat id: ${chatId}`)
-  return `pa-chat-${chatId}`
+const sandboxName = (userId: string) => {
+  if (!isClerkUserId(userId)) throw new Error(`Invalid user id: ${userId}`)
+  return `pa-${userId}`
 }
 
-/** The chat's sandbox, started and ready. Creates it on first use. */
-export async function chatSandbox(chatId: number): Promise<Sandbox> {
-  const name = sandboxName(chatId)
+/** The user's sandbox, started and ready. Creates it on first use. */
+export async function userSandbox(userId: string): Promise<Sandbox> {
+  const name = sandboxName(userId)
   let sandbox: Sandbox | undefined
   try {
     sandbox = await daytona().get(name)
@@ -54,7 +56,7 @@ export async function chatSandbox(chatId: number): Promise<Sandbox> {
       {
         name,
         language: 'python',
-        labels: { app: 'personal-assistant', chat: String(chatId) },
+        labels: { app: 'personal-assistant', clerkUser: userId },
         autoStopInterval: 15,
         autoArchiveInterval: 60 * 24,
         autoDeleteInterval: 60 * 24 * 3,
