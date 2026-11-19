@@ -18,13 +18,8 @@ import {
   downloadTelegramFile,
   getAttachments,
   TELEGRAM_MAX_DOWNLOAD,
-  type TelegramUpdate,
 } from '../telegram/api.js'
-import {
-  isTelegramSecret,
-  routeTelegramUpdate,
-  type AuthorizedMessageEvent,
-} from '../telegram/route.js'
+import type { AuthorizedMessageEvent } from '../telegram/route.js'
 
 export const telegramChat = inngest.createFunction(
   {
@@ -169,23 +164,6 @@ export const telegramChat = inngest.createFunction(
     })
 
     return { chatId, clerkUserId, contextMessages: transcript.length, files: saved, sentFiles, reply }
-  }
-)
-
-// TEMPORARY bridge for the switch-over. Until the Telegram webhook points at
-// the Hono route, updates still arrive through the Inngest webhook
-// (https://inn.gs/e/<key> + inngest/webhooks/telegram-transform.js) as
-// `telegram/update.received`. This applies the same secret check and routing
-// as the Hono route, so the old path can't reach the agent without a linked
-// account. Delete it (and the Inngest webhook) once Telegram is switched over.
-export const telegramLegacyWebhook = inngest.createFunction(
-  { id: 'telegram-legacy-webhook', triggers: [{ event: 'telegram/update.received' }], retries: 3 },
-  async ({ event, step }) => {
-    const { update, secretToken } = event.data as { update: TelegramUpdate; secretToken: string | null }
-    if (!(await isTelegramSecret(secretToken))) throw new NonRetriableError('Invalid Telegram secret token')
-    const routed = await step.run('route', () => routeTelegramUpdate(update))
-    if (routed) await step.sendEvent('forward', routed)
-    return { routed: routed?.name ?? 'ignored' }
   }
 )
 

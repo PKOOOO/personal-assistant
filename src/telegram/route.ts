@@ -8,8 +8,7 @@
 // - Anyone else -> `telegram/link.requested`, which sends a "Connect your
 //   account" link (telegram-link-account).
 //
-// Used by the Hono webhook route (POST /telegram/webhook) and, until the
-// Telegram webhook is moved off Inngest, by the telegram-legacy-webhook bridge.
+// Used by the Hono webhook route (POST /telegram/webhook).
 import { timingSafeEqual } from 'hono/utils/buffer'
 import { findClerkUserId } from '../db/identities.js'
 import type { TelegramUpdate } from './api.js'

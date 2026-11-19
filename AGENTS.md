@@ -13,7 +13,7 @@ Trigger.dev was tried and removed: Trigger.dev Cloud blocked deploys for this ac
 Inngest setup (SDK `inngest` v4):
 
 - `src/inngest/client.ts`: client, id `personal-assistant`.
-- `src/inngest/functions.ts`: the exported `functions` array: `telegram-chat`, `telegram-link-account`, and the temporary `telegram-legacy-webhook`. Add new functions there. (The tutorial function `generate-response` was removed on 2026-11-19.)
+- `src/inngest/functions.ts`: the exported `functions` array: `telegram-chat` and `telegram-link-account`. Add new functions there. (The tutorial function `generate-response` was removed on 2026-11-19.)
 - `src/app.ts`: serves functions at `/api/inngest` (`inngest/hono`).
 - Use v4 APIs only: `createFunction({ id, triggers: [{ event }] }, handler)`. Check `node_modules/inngest` before using an API you're unsure of.
 
@@ -42,7 +42,7 @@ Inngest setup (SDK `inngest` v4):
   - Not built: Daytona desktop computer use (screenshots, mouse, keyboard); only worth adding if the bot needs to drive websites or GUI apps.
 - Memory: `src/agent/transcript.ts`, one JSONL file per Clerk user (`<user_id>.jsonl`) in `TRANSCRIPT_DIR` (default `./data/transcripts`, gitignored); last 40 messages go to the model. AgentKit's HistoryConfig is deliberately not used: for a standalone agent it puts history after the new message and drops past user messages. On Railway, `TRANSCRIPT_DIR` must be on a mounted volume or memory is wiped on each deploy: production has volume `transcripts` (5 GB, us-west2) mounted at `/data`, with `TRANSCRIPT_DIR=/data/transcripts`. A volume limits the service to one replica.
 - Register the webhook: `npm run set-webhook -- https://personal-assistant-production-b793.up.railway.app/telegram/webhook`.
-- Switch-over (webhook switched 2026-11-19; cleanup still to do): Telegram used to post to the Inngest webhook `https://inn.gs/e/<key>` (transform `inngest/webhooks/telegram-transform.js`) -> `telegram/update.received`. `telegram-legacy-webhook` (in `src/inngest/telegram.ts`) handles that event with the same secret check and routing as the Hono route, so the old path is gated too. Now that Telegram posts to the Hono route, delete `telegram-legacy-webhook`, the Inngest dashboard webhook and the transform file. Old per-chat transcripts (`<chatId>.jsonl`) and `pa-chat-*` sandboxes are no longer read; the sandboxes auto-delete.
+- History: until 2026-11-19 Telegram posted to an Inngest Cloud webhook (`https://inn.gs/e/<key>` + a transform) as `telegram/update.received`; that path, its transform and the temporary `telegram-legacy-webhook` bridge were removed on 2026-11-20 after the switch to the Hono route. Old per-chat transcripts (`<chatId>.jsonl`) and `pa-chat-*` sandboxes are no longer read; the sandboxes auto-delete.
 
 ## Database: Neon Postgres + Drizzle ORM
 

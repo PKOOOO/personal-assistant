@@ -31,7 +31,4 @@ console.log(
   })
 )
 
-// Don't print the webhook URL back (an Inngest webhook URL contains its key).
-const info = (await api('getWebhookInfo')) as { result?: Record<string, unknown> }
-const { url: _url, ...rest } = info.result ?? {}
-console.log('getWebhookInfo:', { url_set: Boolean(_url), ...rest })
+console.log('getWebhookInfo:', (await api('getWebhookInfo') as { result?: unknown }).result)
