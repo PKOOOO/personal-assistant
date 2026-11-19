@@ -39,6 +39,20 @@ Status and next steps:
 2. Done (2026-11-18): production runs on Inngest Cloud. Railway has `INNGEST_EVENT_KEY` and `INNGEST_SIGNING_KEY`; the app is synced at `https://personal-assistant-production-b793.up.railway.app/api/inngest` (an unsigned GET returns `Unauthorized`, as expected). A `/test/ai` request on production completed with the Claude reply in `output`.
 3. Done (2026-11-18): removed the temporary public `/test/ai` route.
 
+## Product direction (parked until the tutorial is finished)
+
+The user will decide this after finishing the tutorial they're following; don't start on it unprompted, but bring it up when they ask what to build next.
+
+As a pure question-answering bot, this project adds little over Claude or ChatGPT with web search (the same Firecrawl data sources are available to them), at ~$0.10 per lookup message plus upkeep. It becomes worth having by doing what a general chat app can't:
+
+- Proactive work via Inngest (scheduled/triggered functions): alerts such as "tell me when VIP seats open on Friday's Mombasa-Busia bus" or "when this price drops below KSh 2,500", and daily briefings.
+- Living where users already are: Telegram now, WhatsApp later (more reachable in Kenya than a ChatGPT account).
+- Taking actions: sending the WhatsApp booking message, calendar entries, M-Pesa payments, the user's own systems.
+- Local depth: Kenyan sources (Buupass, maps data for Mombasa), local time, KES.
+- Ownership: own brand, behavior and pricing if it's offered to customers.
+
+Open question for the user: learning project, personal assistant, or a product for others? If personal: add one proactive feature (alerts or a daily briefing). If a product: pick a niche general assistants serve poorly (e.g. Kenyan travel and local services), go deep, ideally on WhatsApp.
+
 ## Railway environment variables
 
 - Never set `INNGEST_DEV` on Railway; it would put production into dev mode.
