@@ -12,7 +12,7 @@ Trigger.dev was tried and removed: Trigger.dev Cloud blocked deploys for this ac
 Inngest setup (SDK `inngest` v4):
 
 - `src/inngest/client.ts`: client, id `personal-assistant`.
-- `src/inngest/functions.ts`: `generate-response`, triggered by event `ai/response.requested` with `data.prompt`; one durable step `ask-claude` calls Claude Haiku. Add new functions to the exported `functions` array.
+- `src/inngest/functions.ts`: the exported `functions` array (currently only `telegram-chat`). Add new functions there. The tutorial function `generate-response` and the `/`, `/marco` and `/test/ai` routes were removed.
 - `src/app.ts`: serves functions at `/api/inngest` (`inngest/hono`).
 - Use v4 APIs only: `createFunction({ id, triggers: [{ event }] }, handler)`. Check `node_modules/inngest` before using an API you're unsure of.
 
@@ -36,7 +36,7 @@ Local development:
 
 Status and next steps:
 
-1. Done (2026-11-18): verified through the `inngest-dev` MCP tools. The app and `generate-response` are registered, `invoke_function` ran it, and `get_run` / `get_run_trace` showed the run Completed with the Claude reply in `output`. `invoke_function_sync` fails with "function was not triggered by invoke event"; use `invoke_function` and then `poll_run_status` / `get_run` instead. If `get_apps` shows the last sync as `unreachable`, the app isn't running on port 3000.
+1. Done (2026-11-18): verified through the `inngest-dev` MCP tools. The app and the tutorial function `generate-response` (since removed) were registered, `invoke_function` ran it, and `get_run` / `get_run_trace` showed the run Completed with the Claude reply in `output`. `invoke_function_sync` fails with "function was not triggered by invoke event"; use `invoke_function` and then `poll_run_status` / `get_run` instead. If `get_apps` shows the last sync as `unreachable`, the app isn't running on port 3000.
 2. Done (2026-11-18): production runs on Inngest Cloud. Railway has `INNGEST_EVENT_KEY` and `INNGEST_SIGNING_KEY`; the app is synced at `https://personal-assistant-production-b793.up.railway.app/api/inngest` (an unsigned GET returns `Unauthorized`, as expected). A `/test/ai` request on production completed with the Claude reply in `output`.
 3. Done (2026-11-18): removed the temporary public `/test/ai` route.
 
