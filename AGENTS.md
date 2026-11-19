@@ -19,7 +19,7 @@ Inngest setup (SDK `inngest` v4):
 
 ## Telegram bot (Hono webhook + account linking + AgentKit chat agent)
 
-- Flow (code written 2026-11-19, not deployed yet; see "Switch-over" below): Telegram -> Hono `POST /telegram/webhook` (`src/app.ts`) checks the `X-Telegram-Bot-Api-Secret-Token` header against `TELEGRAM_WEBHOOK_SECRET` (401 otherwise) -> `routeTelegramUpdate` (`src/telegram/route.ts`) drops everything except private-chat messages from people, and looks the sender's Telegram user id up in `channel_identifiers`:
+- Flow (deployed 2026-11-19, commit `278f633`; Telegram webhook switched to the Hono route the same day): Telegram -> Hono `POST /telegram/webhook` (`src/app.ts`) checks the `X-Telegram-Bot-Api-Secret-Token` header against `TELEGRAM_WEBHOOK_SECRET` (401 otherwise) -> `routeTelegramUpdate` (`src/telegram/route.ts`) drops everything except private-chat messages from people, and looks the sender's Telegram user id up in `channel_identifiers`:
   - linked -> event `telegram/message.authorized` `{ update, clerkUserId }` -> `telegram-chat`. Only this event runs the agent.
   - not linked -> event `telegram/link.requested` `{ update, telegramUserId }` -> `telegram-link-account` (`src/inngest/link.ts`).
   - Event ids `telegram-message-<update_id>` / `telegram-link-<update_id>` dedupe Telegram resends. A database or Inngest error answers 503 so Telegram retries.
@@ -42,7 +42,7 @@ Inngest setup (SDK `inngest` v4):
   - Not built: Daytona desktop computer use (screenshots, mouse, keyboard); only worth adding if the bot needs to drive websites or GUI apps.
 - Memory: `src/agent/transcript.ts`, one JSONL file per Clerk user (`<user_id>.jsonl`) in `TRANSCRIPT_DIR` (default `./data/transcripts`, gitignored); last 40 messages go to the model. AgentKit's HistoryConfig is deliberately not used: for a standalone agent it puts history after the new message and drops past user messages. On Railway, `TRANSCRIPT_DIR` must be on a mounted volume or memory is wiped on each deploy: production has volume `transcripts` (5 GB, us-west2) mounted at `/data`, with `TRANSCRIPT_DIR=/data/transcripts`. A volume limits the service to one replica.
 - Register the webhook: `npm run set-webhook -- https://personal-assistant-production-b793.up.railway.app/telegram/webhook`.
-- Switch-over (until done, production still uses the old path): Telegram currently posts to the Inngest webhook `https://inn.gs/e/<key>` (transform `inngest/webhooks/telegram-transform.js`) -> `telegram/update.received`. `telegram-legacy-webhook` (in `src/inngest/telegram.ts`) handles that event with the same secret check and routing as the Hono route, so the old path is gated too. After `set-webhook` points Telegram at the Hono route, delete `telegram-legacy-webhook`, the Inngest dashboard webhook and the transform file. Old per-chat transcripts (`<chatId>.jsonl`) and `pa-chat-*` sandboxes are no longer read; the sandboxes auto-delete.
+- Switch-over (webhook switched 2026-11-19; cleanup still to do): Telegram used to post to the Inngest webhook `https://inn.gs/e/<key>` (transform `inngest/webhooks/telegram-transform.js`) -> `telegram/update.received`. `telegram-legacy-webhook` (in `src/inngest/telegram.ts`) handles that event with the same secret check and routing as the Hono route, so the old path is gated too. Now that Telegram posts to the Hono route, delete `telegram-legacy-webhook`, the Inngest dashboard webhook and the transform file. Old per-chat transcripts (`<chatId>.jsonl`) and `pa-chat-*` sandboxes are no longer read; the sandboxes auto-delete.
 
 ## Database: Neon Postgres + Drizzle ORM
 
@@ -72,11 +72,11 @@ Inngest setup (SDK `inngest` v4):
 - This machine can't push to GitHub (no credentials, no `gh`); commit locally and ask the user to run `git push origin main`.
 - Check a deploy: `railway deployment list` (the newest should be SUCCESS, and `--json` shows its `meta.commitHash`), `railway logs <id> --build` and `railway logs <id> --deployment` (should end with "Server is running on http://localhost:8080"). Healthy production answers 404 on `/` and `{"message":"Unauthorized"}` (401) on an unsigned GET `/api/inngest`.
 - Inngest Cloud runs the functions; the app syncs at `/api/inngest` with `INNGEST_EVENT_KEY` and `INNGEST_SIGNING_KEY`. If a removed function still shows in the dashboard after a deploy, resync the app there.
-- Last verified deploy: 2026-11-19, commit `d71b0bf` (file handling, tutorial routes and `generate-response` removed).
+- Last verified deploy: 2026-11-19, commit `278f633` (Clerk account linking). After a deploy that adds or changes functions, sync with `curl -X PUT https://personal-assistant-production-b793.up.railway.app/api/inngest` (should say `Successfully registered`); deploys don't sync on their own.
 
 ## Railway environment variables
 
-- Set on production: `CLAUDE_API_KEY`, `FIRECRAWL_API_KEY`, `DAYTONA_API_KEY` (added 2026-11-19), `INNGEST_EVENT_KEY`, `INNGEST_SIGNING_KEY`, `TELEGRAM_BOR_TOKEN` (sic, the code accepts both spellings), `TELEGRAM_WEBHOOK_SECRET`, `TRANSCRIPT_DIR=/data/transcripts`, plus `DATABASE_URL`, `DATABASE_URL_UNPLOOLED` and `NEON_BRANCH` (not used by the code yet) and `TRIGGER_SECRET_KEY` (see below).
+- Set on production: `CLERK_PUBLISHABLE_KEY`, `CLERK_OAUTH_CLIENT_ID`, `CLERK_OAUTH_CLIENT_SECRET` (added 2026-11-19), `CLAUDE_API_KEY`, `FIRECRAWL_API_KEY`, `DAYTONA_API_KEY` (added 2026-11-19), `INNGEST_EVENT_KEY`, `INNGEST_SIGNING_KEY`, `TELEGRAM_BOR_TOKEN` (sic, the code accepts both spellings), `TELEGRAM_WEBHOOK_SECRET`, `TRANSCRIPT_DIR=/data/transcripts`, plus `DATABASE_URL`, `DATABASE_URL_UNPLOOLED` and `NEON_BRANCH` (not used by the code yet) and `TRIGGER_SECRET_KEY` (see below).
 - To set one variable from `.env` without printing it: `railway variables --skip-deploys --set "NAME=$(grep '^NAME=' .env | cut -d= -f2-)"`, then deploy by pushing.
 - Never set `INNGEST_DEV` on Railway; it would put production into dev mode.
 - Never set, overwrite, or delete `TRIGGER_SECRET_KEY` on Railway (the user's standing rule, kept even though Trigger.dev was removed). The local `.env` value is a dev key.
