@@ -1,4 +1,5 @@
 import { Hono, type Context } from 'hono'
+import { sentry } from '@sentry/hono/node'
 import { serve } from 'inngest/hono'
 import { inngest } from './inngest/client.js'
 import { functions } from './inngest/functions.js'
@@ -10,6 +11,10 @@ import { parseTelegramUpdate } from './telegram/channel.js'
 import { isTelegramSecret } from './telegram/route.js'
 
 const app = new Hono()
+
+// Sentry (initialised in src/instrument.ts): traces requests and reports errors
+// that reach Hono's onError.
+app.use(sentry(app))
 
 // Inngest calls this endpoint to discover and run background functions.
 app.on(['GET', 'POST', 'PUT'], '/api/inngest', serve({ client: inngest, functions }))

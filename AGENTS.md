@@ -81,6 +81,15 @@ Inngest setup (SDK `inngest` v4):
 - Inngest Cloud runs the functions; the app syncs at `/api/inngest` with `INNGEST_EVENT_KEY` and `INNGEST_SIGNING_KEY`. If a removed function still shows in the dashboard after a deploy, resync the app there.
 - Last verified deploy: 2026-11-19, commit `278f633` (Clerk account linking). After a deploy that adds or changes functions, sync with `curl -X PUT https://personal-assistant-production-b793.up.railway.app/api/inngest` (should say `Successfully registered`); deploys don't sync on their own.
 
+## Sentry (error monitoring, added 2026-11-20)
+
+- Org `hardhaven`, project `personal-assistant-server` (platform `node-hono`, EU ingest). CLI: `sentry` (installed in `~/.local/bin`, logged in), e.g. `sentry issue list hardhaven/personal-assistant-server --period 24h`.
+- `src/instrument.ts` calls `Sentry.init` from `@sentry/hono/node` and is loaded with `--import` before the app (`dev` and `start` scripts). Nothing is sent without `SENTRY_DSN`. Environment is `development` when `INNGEST_DEV` is set, else `production` (override `SENTRY_ENVIRONMENT`); release = `RAILWAY_GIT_COMMIT_SHA`; traces 100% locally, 10% in production; `console.warn`/`console.error` go to Sentry Logs.
+- Privacy: HTTP bodies, AI prompts/outputs, DB query data and stack-frame variables are not collected (`dataCollection`), because users' chats and files pass through. Change that only deliberately.
+- `src/app.ts` has `app.use(sentry(app))` (request traces, errors reaching `onError`). The webhook routes catch their own errors and log them with `console.error`, so those appear as Sentry logs, not issues.
+- Inngest function failures are reported by `@inngest/middleware-sentry` (`SentryMiddleware` on the client, final attempt only). It ships CommonJS types only, hence the `as unknown as Middleware.Class` cast; it works at runtime (verified 2026-11-20).
+- The main model calls go through `step.ai.infer` (Inngest makes the request), so Sentry's Anthropic auto-instrumentation only sees the direct `@anthropic-ai/sdk` call in `look_at_file`.
+
 ## Railway environment variables
 
 - Needed on production for iMessage, not set yet (2026-11-20): `LINQ_API_V3_API_KEY` (Linq API token; `linq tokens show`) and `LINQ_WEBHOOK_SECRET` (signing secret of the production subscription from `linq webhooks create`). Without them `/linq/webhook` answers 503 and iMessage replies fail; Telegram is unaffected.
