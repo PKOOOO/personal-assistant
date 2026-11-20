@@ -95,3 +95,21 @@ As a pure question-answering bot, this project adds little over Claude or ChatGP
 - Ownership: own brand, behavior and pricing if it's offered to customers.
 
 Open question for the user: learning project, personal assistant, or a product for others? If personal: add one proactive feature (alerts or a daily briefing). If a product: pick a niche general assistants serve poorly (e.g. Kenyan travel and local services), go deep, ideally on WhatsApp.
+
+Direction as of 2026-11-20 (the user's plans; nothing below is built yet):
+
+- Channels: Telegram now, then WhatsApp and iMessage on the same back end, with one Clerk account across them (`channel_identifiers` already has `platform`). iMessage has no open bot API; the official route is Apple Messages for Business (registered business, approved messaging service provider), so it comes last. WhatsApp Business Platform: free-form replies only within 24 h of the user's last message; alerts outside that window need paid, pre-approved templates.
+- Plans: Free (limited daily use) and Pro (higher limits, alerts, bigger files), Pro paid with M-Pesa STK Push via the Safaricom Daraja API (callback URL, record the M-Pesa receipt, never count a payment twice, renewal reminders). Prices and limits not decided. Going live needs a Paybill/Till number and Daraja production approval; develop against the Daraja sandbox.
+- The user is also using this project as the basis for a friend's university project proposal (a Word document written outside this repo).
+
+### Conversation management (planned, not built)
+
+Today each Clerk user has one endless conversation: one transcript file, and only the last 40 messages (`MAX_CONTEXT_MESSAGES` in `src/agent/transcript.ts`) go to the model. It never overflows, but older facts are forgotten, unrelated topics get mixed in the same window, and every reply pays for up to 40 old messages. Planned fixes, in order:
+
+1. Long-term memory: a short per-user note of lasting facts (name, city, preferences, ongoing projects), sent with every message. Before messages leave the 40-message window, the model saves anything worth keeping into it.
+2. `/new` (or "new topic"): starts a fresh conversation, keeping the long-term memory but not the old messages. Works the same on every channel because it's just a message.
+3. Named topics/projects (good Pro feature): `/topic CV`, "switch to my trip", "what topics do I have?". Each topic has its own transcript and its own sandbox folder; the model can ask "start a new topic for this?" when the subject changes.
+4. Use channel features where they exist: Telegram may support topic threads in private chats with bots in recent Bot API versions (check the current Bot API docs before relying on it; the code already passes `message_thread_id`). WhatsApp and iMessage have no threads, only quoted replies, so use commands there. On every channel, include the quoted message when the user replies to an older one.
+5. A search tool over the user's full history, so older conversations stay reachable.
+
+Recommended first step: 1 and 2 (small, same on all channels); 3 later, possibly Pro-only.
