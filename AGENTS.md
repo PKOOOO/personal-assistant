@@ -20,7 +20,8 @@ Inngest setup (SDK `inngest` v4):
 ## Telegram bot (Hono webhook + account linking + AgentKit chat agent)
 
 - Flow (deployed 2026-11-19, commit `278f633`; Telegram webhook switched to the Hono route the same day): Telegram -> Hono `POST /telegram/webhook` (`src/app.ts`) checks the `X-Telegram-Bot-Api-Secret-Token` header against `TELEGRAM_WEBHOOK_SECRET` (401 otherwise) -> `routeTelegramUpdate` (`src/telegram/route.ts`) drops everything except private-chat messages from people, and looks the sender's Telegram user id up in `channel_identifiers`:
-  - linked -> event `telegram/message.authorized` `{ update, clerkUserId }` -> `telegram-chat`. Only this event runs the agent.
+  - linked, no active Clerk Billing `pro` plan -> the webhook itself replies (no Inngest event) with an "Upgrade to Pro" button to the Account Portal Billing tab (`https://<slug>.accounts.dev/user/billing` in dev; override with `CLERK_ACCOUNT_PORTAL_URL`). Response `routed: "upgrade-required"`.
+  - linked + Pro -> event `telegram/message.authorized` `{ update, clerkUserId }` -> `telegram-chat`. Only this event runs the agent.
   - not linked -> event `telegram/link.requested` `{ update, telegramUserId }` -> `telegram-link-account` (`src/inngest/link.ts`).
   - Event ids `telegram-message-<update_id>` / `telegram-link-<update_id>` dedupe Telegram resends. A database or Inngest error answers 503 so Telegram retries.
 - Account linking (`telegram-link-account`): Clerk OAuth Device Authorization Grant (`src/auth/clerk-device.ts`). Starts the device flow, sends "Connect your account" with the short user code and a button to `verification_uri_complete`, then polls the token endpoint in steps of up to 50 s (respecting `interval` / `slow_down`) until approved, denied or expired (10 min). On approval it reads the user id from `/oauth/userinfo`, revokes the tokens, saves the row with `linkAccount` (`src/db/identities.ts`; an existing link wins), replies "You're connected" and forwards the original message to the agent (unless it was a `/command`). `singleton` (key = Telegram user id, mode `skip`) means one pending code per user: messages sent while a code is pending get no reply. Expired/denied: user sends any message to get a new link.
@@ -55,6 +56,7 @@ Inngest setup (SDK `inngest` v4):
 - Clerk app "Personal Assistnace" (`app_3ML86bK95rDK7aEkIh2GVvAyal4`), development instance only (`ins_3ML86cup5TDpsR7nL0Y7c9uekSW`). Its keys are `CLERK_PUBLISHABLE_KEY` / `CLERK_SECRET_KEY` in `.env`; don't overwrite them (no `clerk env pull` into `.env`, no `clerk init --fresh`).
 - CLI: run it as `npx -y clerk@latest ...` (not installed globally). The repo is linked to the app (`clerk link`, 2026-11-19); `clerk doctor --json` passes apart from "production not configured" and shell completion. `clerk` commands are pre-allowed in `.claude/settings.local.json`.
 - Used for linking Telegram accounts (device flow, see the Telegram section).
+- Billing (enabled 2026-11-20, user plans only, dev instance on Clerk's shared dev gateway): plans `free_user` (default) and `pro` ($10/month, `cplan_3MN67ahObKmb11jNfUlA12ecbGQ`, no features). Created with `clerk enable billing --for user` + `clerk config patch` (`clerk config pull --keys billing` shows it). The webhook gate (`src/auth/clerk-billing.ts`, called from `src/telegram/route.ts`) has no Clerk session, so it reads `GET /v1/users/{id}/billing/subscription` with `CLERK_SECRET_KEY` and checks for an `active` item whose plan slug is `pro` (a canceled Pro stays active until period end). A Clerk API error answers 503. Production needs a Stripe account connected before Billing works there.
 
 ## Local development and testing
 
@@ -76,6 +78,7 @@ Inngest setup (SDK `inngest` v4):
 
 ## Railway environment variables
 
+- Needed on production but not set yet (2026-11-20): `CLERK_SECRET_KEY`, for the Pro gate. Set it before deploying the gate, or every message from a linked user answers 503.
 - Set on production: `CLERK_PUBLISHABLE_KEY`, `CLERK_OAUTH_CLIENT_ID`, `CLERK_OAUTH_CLIENT_SECRET` (added 2026-11-19), `CLAUDE_API_KEY`, `FIRECRAWL_API_KEY`, `DAYTONA_API_KEY` (added 2026-11-19), `INNGEST_EVENT_KEY`, `INNGEST_SIGNING_KEY`, `TELEGRAM_BOR_TOKEN` (sic, the code accepts both spellings), `TELEGRAM_WEBHOOK_SECRET`, `TRANSCRIPT_DIR=/data/transcripts`, plus `DATABASE_URL`, `DATABASE_URL_UNPLOOLED` and `NEON_BRANCH` (not used by the code yet) and `TRIGGER_SECRET_KEY` (see below).
 - To set one variable from `.env` without printing it: `railway variables --skip-deploys --set "NAME=$(grep '^NAME=' .env | cut -d= -f2-)"`, then deploy by pushing.
 - Never set `INNGEST_DEV` on Railway; it would put production into dev mode.

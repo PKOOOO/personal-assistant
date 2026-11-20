@@ -12,8 +12,9 @@ app.on(['GET', 'POST', 'PUT'], '/api/inngest', serve({ client: inngest, function
 
 // Telegram's webhook (set with `npm run set-webhook`). Checks the secret
 // token, looks the sender up in channel_identifiers, and hands the update to
-// Inngest: linked users' messages go to the agent, everyone else gets a
-// "Connect your account" link. Answers 200 quickly so Telegram doesn't resend;
+// Inngest: unlinked users get a "Connect your account" link, linked users
+// without the Clerk Billing `pro` plan get an upgrade link (sent from here),
+// and linked Pro users' messages go to the agent. Answers 200 quickly so Telegram doesn't resend;
 // a 5xx (database or Inngest down) makes Telegram retry later.
 app.post('/telegram/webhook', async (c) => {
   if (!(await isTelegramSecret(c.req.header('X-Telegram-Bot-Api-Secret-Token')))) {
@@ -30,7 +31,7 @@ app.post('/telegram/webhook', async (c) => {
 
   try {
     const event = await routeTelegramUpdate(update)
-    if (event) await inngest.send(event)
+    if (event && event.name !== 'upgrade-required') await inngest.send(event)
     return c.json({ ok: true, routed: event?.name ?? 'ignored' })
   } catch (err) {
     console.error('telegram webhook failed:', err)
