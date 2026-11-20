@@ -3,11 +3,11 @@
 // back.
 //
 // - Found by a fixed name (`pa-<clerk user id>`), so files persist between
-//   messages and are shared by every Telegram account linked to the user.
+//   messages and are shared by every chat account linked to the user.
 // - Stops itself after 15 idle minutes (disk kept, no CPU/RAM cost), is
 //   restarted on the next use, and is deleted after 3 days stopped.
-// - File bytes move between Telegram and the sandbox inside our app (see
-//   telegram.ts and sandbox-tools.ts), never through Inngest step outputs:
+// - File bytes move between the chat platform and the sandbox inside our app
+//   (see src/inngest/chat.ts and sandbox-tools.ts), never through Inngest step outputs:
 //   step results are size-limited and stored by Inngest.
 //
 // Daytona v0 SDK (`@daytona/sdk` 0.x, app.daytona.io). Needs DAYTONA_API_KEY.
@@ -23,7 +23,7 @@ export const INBOX = `${WORKDIR}/inbox`
 // Installed once when a user's sandbox is created. The default image already
 // has Python with pypdf, Pillow, pandas and matplotlib.
 const BOOTSTRAP =
-  'pip install -q pymupdf reportlab python-docx openpyxl qrcode 2>&1 | tail -3'
+  'pip install -q pymupdf reportlab python-docx openpyxl qrcode pillow-heif 2>&1 | tail -3'
 
 let client: Daytona | undefined
 function daytona() {

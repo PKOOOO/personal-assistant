@@ -1,21 +1,26 @@
-import { Hono } from 'hono'
+import { Hono, type Context } from 'hono'
 import { serve } from 'inngest/hono'
 import { inngest } from './inngest/client.js'
 import { functions } from './inngest/functions.js'
+import { handleInbound } from './channels/router.js'
+import type { InboundMessage } from './channels/types.js'
+import { linqEnabled, parseLinqWebhook } from './linq/channel.js'
 import type { TelegramUpdate } from './telegram/api.js'
-import { isTelegramSecret, routeTelegramUpdate } from './telegram/route.js'
+import { parseTelegramUpdate } from './telegram/channel.js'
+import { isTelegramSecret } from './telegram/route.js'
 
 const app = new Hono()
 
 // Inngest calls this endpoint to discover and run background functions.
 app.on(['GET', 'POST', 'PUT'], '/api/inngest', serve({ client: inngest, functions }))
 
-// Telegram's webhook (set with `npm run set-webhook`). Checks the secret
-// token, looks the sender up in channel_identifiers, and hands the update to
-// Inngest: unlinked users get a "Connect your account" link, linked users
-// without the Clerk Billing `pro` plan get an upgrade link (sent from here),
-// and linked Pro users' messages go to the agent. Answers 200 quickly so Telegram doesn't resend;
-// a 5xx (database or Inngest down) makes Telegram retry later.
+// Chat channel webhooks. Each one verifies the request and turns it into an
+// InboundMessage (or null to ignore it); `routeMessage` then links unlinked
+// senders, sends non-Pro users an upgrade link, and hands Pro users' messages
+// to the agent (src/channels/router.ts). They answer 2xx quickly so the
+// platform doesn't resend; a 5xx (database, Clerk or Inngest down) makes it retry.
+
+// Telegram (set with `npm run set-webhook`).
 app.post('/telegram/webhook', async (c) => {
   if (!(await isTelegramSecret(c.req.header('X-Telegram-Bot-Api-Secret-Token')))) {
     return c.json({ error: 'Unauthorized' }, 401)
@@ -29,14 +34,34 @@ app.post('/telegram/webhook', async (c) => {
   }
   if (!Number.isSafeInteger(update?.update_id)) return c.json({ error: 'Not a Telegram update' }, 400)
 
+  return routeMessage(c, 'telegram', parseTelegramUpdate(update))
+})
+
+// iMessage through Linq (subscription created with `linq webhooks create`,
+// URL ending in ?version=2026-02-03). Signed with Standard Webhooks.
+app.post('/linq/webhook', async (c) => {
+  if (!linqEnabled()) return c.json({ error: 'Not configured' }, 503)
+
+  const body = await c.req.text()
+  let message: InboundMessage | null
   try {
-    const event = await routeTelegramUpdate(update)
-    if (event && event.name !== 'upgrade-required') await inngest.send(event)
-    return c.json({ ok: true, routed: event?.name ?? 'ignored' })
+    message = parseLinqWebhook(body, c.req.header())
   } catch (err) {
-    console.error('telegram webhook failed:', err)
+    // Linq treats 4xx as permanent, so a forged or broken request isn't retried.
+    console.warn('linq webhook rejected:', err instanceof Error ? err.message : err)
+    return c.json({ error: 'Invalid signature' }, 401)
+  }
+  return routeMessage(c, 'imessage', message)
+})
+
+async function routeMessage(c: Context, channel: string, message: InboundMessage | null) {
+  if (!message) return c.json({ ok: true, routed: 'ignored' })
+  try {
+    return c.json({ ok: true, routed: await handleInbound(message) })
+  } catch (err) {
+    console.error(`${channel} webhook failed:`, err)
     return c.json({ error: 'Temporarily unavailable' }, 503)
   }
-})
+}
 
 export default app

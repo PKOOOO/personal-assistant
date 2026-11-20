@@ -1,11 +1,12 @@
-// "Connect your account": links a Telegram user to a Clerk user with Clerk's
-// device authorization flow (see src/auth/clerk-device.ts).
+// "Connect your account": links a chat account (a Telegram user, an iMessage
+// handle) to a Clerk user with Clerk's device authorization flow (see
+// src/auth/clerk-device.ts).
 //
-// Triggered by `telegram/link.requested` (a message from an unlinked sender,
-// see src/telegram/route.ts). It sends the user a Clerk link and a short code,
+// Triggered by `chat/link.requested` (a message from an unlinked sender, see
+// src/channels/router.ts). It sends the user a Clerk link and a short code,
 // waits up to 10 minutes for them to sign in and approve, saves
-// "Telegram user <id> belongs to Clerk user <user_...>" in channel_identifiers,
-// and then passes the original message on to the agent.
+// "<platform> account <id> belongs to Clerk user <user_...>" in
+// channel_identifiers, and then passes the original message on to the agent.
 import { inngest } from './client.js'
 import {
   deviceAuthEnabled,
@@ -13,9 +14,11 @@ import {
   startDeviceAuthorization,
   type PollResult,
 } from '../auth/clerk-device.js'
+import { hasProPlan } from '../auth/clerk-billing.js'
+import { getChannel } from '../channels/index.js'
+import { messageEventId, sendUpgradeLink, type LinkRequestedEvent } from '../channels/router.js'
+import { isCommand, type SendOptions } from '../channels/types.js'
 import { findClerkUserId, linkAccount } from '../db/identities.js'
-import { callTelegram } from '../telegram/api.js'
-import type { LinkRequestedEvent } from '../telegram/route.js'
 
 // Each polling step runs at most this long; the function then continues in a
 // new step. Keeps every HTTP call from Inngest short, and the step count low
@@ -23,23 +26,23 @@ import type { LinkRequestedEvent } from '../telegram/route.js'
 const POLL_STEP_MS = 50_000
 const MAX_POLL_STEPS = 20
 
-export const telegramLink = inngest.createFunction(
+export const linkAccountFn = inngest.createFunction(
   {
-    id: 'telegram-link-account',
-    triggers: [{ event: 'telegram/link.requested' }],
-    // One pending link per Telegram user: further messages while a code is
+    id: 'link-account',
+    triggers: [{ event: 'chat/link.requested' }],
+    // One pending link per chat account: further messages while a code is
     // waiting for approval are skipped instead of sending a new code each time.
-    singleton: { key: 'event.data.telegramUserId', mode: 'skip' },
+    singleton: { key: 'event.data.linkKey', mode: 'skip' },
     retries: 2,
   },
   async ({ event, step }) => {
-    const { update, telegramUserId } = event.data as LinkRequestedEvent['data']
-    const message = update.message!
-    const send = (text: string, extra: Record<string, unknown> = {}) =>
-      callTelegram('sendMessage', { chat_id: message.chat.id, text, ...extra })
+    const { message } = event.data as LinkRequestedEvent['data']
+    const { platform, senderId } = message
+    const channel = getChannel(platform)
+    const send = (text: string, options?: SendOptions) => channel.sendText(message.target, text, options)
 
-    // An earlier run may have linked this user while this event waited.
-    const already = await step.run('check-link', () => findClerkUserId('telegram', telegramUserId))
+    // An earlier run may have linked this account while this event waited.
+    const already = await step.run('check-link', () => findClerkUserId(platform, senderId))
     if (already) {
       await forward(already)
       return { status: 'already linked' }
@@ -65,14 +68,9 @@ export const telegramLink = inngest.createFunction(
           `1. Open the link below and sign in (Google works).`,
           `2. Check that it shows the code ${device.userCode}, then approve.`,
           '',
-          `The link expires in ${minutes} minutes. Only approve it if you asked for it here in Telegram: approving links this Telegram account to your account.`,
+          `The link expires in ${minutes} minutes. Only approve it if you asked for it here in ${channel.displayName}: approving links this ${channel.displayName} account to your account.`,
         ].join('\n'),
-        {
-          link_preview_options: { is_disabled: true },
-          reply_markup: {
-            inline_keyboard: [[{ text: 'Connect your account', url: device.verificationUriComplete }]],
-          },
-        }
+        { link: { label: 'Connect your account', url: device.verificationUriComplete } }
       )
     )
 
@@ -96,9 +94,7 @@ export const telegramLink = inngest.createFunction(
     }
 
     const approvedUserId = result.clerkUserId
-    const clerkUserId = await step.run('save-link', () =>
-      linkAccount('telegram', telegramUserId, approvedUserId)
-    )
+    const clerkUserId = await step.run('save-link', () => linkAccount(platform, senderId, approvedUserId))
 
     await step.run('reply-linked', () =>
       send("You're connected. Your conversations and files are now tied to your account.")
@@ -106,13 +102,19 @@ export const telegramLink = inngest.createFunction(
     await forward(clerkUserId)
     return { status: 'linked', clerkUserId }
 
-    // Answer the message that started this, unless it was just a command like /start.
+    // Answer the message that started this, unless it was just a command like
+    // /start. Same Pro gate as the router: without Pro, send the upgrade link.
     async function forward(clerkUserId: string) {
-      if ((message.text ?? '').trim().startsWith('/')) return
+      if (isCommand(message)) return
+      const pro = await step.run('check-plan', () => hasProPlan(clerkUserId))
+      if (!pro) {
+        await step.run('reply-upgrade', () => sendUpgradeLink(message))
+        return
+      }
       await step.sendEvent('forward-message', {
-        name: 'telegram/message.authorized',
-        id: `telegram-message-${update.update_id}`,
-        data: { update, clerkUserId },
+        name: 'chat/message.authorized',
+        id: messageEventId(message),
+        data: { message, clerkUserId },
       })
     }
   }

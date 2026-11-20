@@ -1,5 +1,5 @@
-import { telegramLink } from './link.js'
-import { telegramChat } from './telegram.js'
+import { chat } from './chat.js'
+import { linkAccountFn } from './link.js'
 
 // Every Inngest function the app serves at /api/inngest.
-export const functions = [telegramChat, telegramLink]
+export const functions = [chat, linkAccountFn]

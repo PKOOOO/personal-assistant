@@ -1,10 +1,11 @@
-// The Telegram chat agent, built with Inngest AgentKit.
+// The chat agent (all channels), built with Inngest AgentKit.
 import { anthropic, createAgent, type AgentResult, type Message } from '@inngest/agent-kit'
 import type { GetStepTools, Inngest } from 'inngest'
 import type { TranscriptEntry } from './transcript.js'
 import { webTools, webToolsEnabled } from './web-tools.js'
 import { sandboxEnabled } from './sandbox.js'
 import { sandboxTools, type SandboxToolContext } from './sandbox-tools.js'
+import type { Channel } from '../channels/types.js'
 
 // Claude Sonnet 5.5: strong at tool use and everyday assistant work, at
 // $2 / $10 per MTok.
@@ -41,7 +42,7 @@ const model = anthropic({
 // (inspect, write a script, run it, check the result, send it).
 const MAX_MODEL_CALLS = 12
 
-const BASE_PROMPT = `You are a personal assistant that people chat with on Telegram. You remember earlier messages in this chat.
+const BASE_PROMPT = `You remember earlier messages in this conversation, including ones the user sent from their other linked chat apps.
 
 # Looking things up
 You can look things up live. Do it whenever the answer depends on current or changing information, or on facts you can't be sure of, and whenever the user asks you to find, check, compare or look something up. Examples: what's open or available (restaurant tables, classes, campsites, tickets), prices (tickets, products across stores, flights and hotels, resale value of sneakers, records or cars), listings (apartments, homes, jobs), markets (stock data, insider trades, analyst views, prediction market odds, crypto yields), sports projections, news, reviews and ratings of businesses or contractors, company facts and funding, laws and rules, and anything that happened after your training.
@@ -57,7 +58,7 @@ Make as few calls as you need. If something essential is missing and you can't g
 
 # Files and your computer
 You have your own Linux computer for this chat, with the tools run_command, write_file, look_at_file and send_file. Files the user sends are saved on it, and their message lists where (for example "inbox/contract.pdf"); files stay there for later messages in this chat.
-- Use it to read, convert, edit and create files: PDFs, images, Word and Excel documents, CSVs, charts, scripts. Read a PDF's text with pymupdf before answering questions about it; look at images and scans with look_at_file.
+- Use it to read, convert, edit and create files: PDFs, images, Word and Excel documents, CSVs, charts, scripts. Read a PDF's text with pymupdf before answering questions about it; look at images and scans with look_at_file. iPhone photos are often HEIC: convert them to JPEG first (pillow-heif; pip install it if missing).
 - When the user wants a file back, make it and deliver it with send_file. You can send files, so never tell the user you can't. Write the result to a new file with a clear name and keep the original.
 - Check your work before sending: run the script, and use look_at_file on visual results (a page you edited, a chart, an image) to confirm it looks right.
 - Never mention sandboxes, Daytona or tool names; to the user you simply opened, edited or made the file.
@@ -71,9 +72,9 @@ You have your own Linux computer for this chat, with the tools run_command, writ
 - Present evidence, not financial, legal or medical advice; for those, add a short note to check with a professional when it matters.
 
 # Style
-Telegram shows plain text: no Markdown tables, no headings, no bold. Use short lines or a simple numbered list, and paste links as plain URLs. Keep replies concise: lead with the answer, then the top few options (usually up to 5).`
+Keep replies concise: lead with the answer, then the top few options (usually up to 5).`
 
-function systemPrompt() {
+function systemPrompt(channel: Channel) {
   const now = new Date()
   const date = now.toISOString().slice(0, 10)
   const time = now.toISOString().slice(11, 16)
@@ -84,7 +85,8 @@ function systemPrompt() {
       'Your computer is unavailable right now: you cannot open, edit or send files. Say so if a request needs it.',
   ].filter(Boolean)
   const tools = notes.length ? `\n\n# Note\n${notes.join('\n')}` : ''
-  return `${BASE_PROMPT}${tools}
+  return `You are a personal assistant that people chat with on ${channel.displayName}. ${BASE_PROMPT}
+${channel.replyStyle}${tools}
 
 # Date and time
 It is now ${date} ${time} UTC. Users are rarely on UTC: before resolving "today", "tonight", "tomorrow" or "this weekend", pick the user's UTC offset (from a place they live in or ask about, e.g. Mombasa/Nairobi is UTC+3, London UTC+0, New York UTC-5, India UTC+5:30; or a timezone mentioned in this chat or returned by a maps result) and read their local date and time from this table. Don't calculate it yourself.
@@ -145,7 +147,7 @@ export async function answer(
   // handlers when it is passed to run(); without it, lookups run outside
   // steps and are repeated (and paid for again) on every function replay.
   step: GetStepTools<Inngest.Any>,
-  // Whose sandbox the tools use, and the Telegram chat send_file delivers to.
+  // Whose sandbox the tools use, and the channel and chat send_file delivers to.
   // sentFiles is filled in as files are sent.
   chat: SandboxToolContext
 ): Promise<string> {
@@ -155,8 +157,8 @@ export async function answer(
   ]
 
   const agent = createAgent({
-    name: 'telegram-assistant',
-    system: systemPrompt(),
+    name: 'assistant',
+    system: systemPrompt(chat.channel),
     model,
     tools: [
       ...(webToolsEnabled() ? webTools : []),

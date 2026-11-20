@@ -1,8 +1,8 @@
 // Transcript-based conversation memory, no database.
 //
 // Each Clerk user gets one append-only JSONL file, `<user_id>.jsonl`, shared by
-// every Telegram account linked to them: one line per message,
-// `{ role, content, ts, updateId }`. The agent reads the recent tail of the file
+// every account linked to them on any channel (Telegram, iMessage): one line
+// per message, `{ role, content, ts, messageKey, channel }`. The agent reads the recent tail of the file
 // before replying, and the user message plus the reply are appended afterwards.
 //
 // Files live in TRANSCRIPT_DIR (default ./data/transcripts). On Railway that
@@ -16,10 +16,16 @@ export type TranscriptEntry = {
   role: 'user' | 'assistant'
   content: string
   ts: string
-  // Telegram update_id that produced this message; used to skip duplicates
-  // if an Inngest step is retried after a partial write.
-  updateId: number
+  // "<platform>:<message id>" of the incoming message that produced this line;
+  // used to skip duplicates if an Inngest step is retried after a partial write.
+  messageKey?: string
+  // Channel the message came in on (telegram, imessage).
+  channel?: string
+  // Older lines (Telegram only, before 2026-11-20) have the update_id instead.
+  updateId?: number
 }
+
+const keyOf = (e: TranscriptEntry) => `${e.messageKey ?? `telegram:${e.updateId}`}:${e.role}`
 
 // How many recent messages the agent sees. Older lines stay in the file but
 // are not sent to the model, which keeps token usage bounded.
@@ -66,12 +72,10 @@ export async function loadTranscript(userId: string): Promise<TranscriptEntry[]>
   return firstUser === -1 ? [] : recent.slice(firstUser)
 }
 
-/** Append messages, skipping any already written for the same update and role. */
+/** Append messages, skipping any already written for the same message and role. */
 export async function appendTranscript(userId: string, entries: TranscriptEntry[]) {
-  const existing = new Set(
-    (await readAll(userId)).map((e) => `${e.updateId}:${e.role}`)
-  )
-  const fresh = entries.filter((e) => !existing.has(`${e.updateId}:${e.role}`))
+  const existing = new Set((await readAll(userId)).map(keyOf))
+  const fresh = entries.filter((e) => !existing.has(keyOf(e)))
   if (fresh.length === 0) return
 
   await mkdir(transcriptDir(), { recursive: true })

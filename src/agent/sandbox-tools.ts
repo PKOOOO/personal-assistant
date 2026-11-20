@@ -1,6 +1,6 @@
 // Computer tools for the chat agent, backed by the user's Daytona sandbox
 // (see sandbox.ts): run commands, write files, look at images and PDFs, and
-// send files back to the Telegram chat.
+// send files back to the user's chat (on whichever channel they wrote from).
 //
 // Like the web tools, each call runs in its own Inngest step (via durable()),
 // so a replayed function run reuses the saved result instead of re-running a
@@ -10,13 +10,14 @@ import { createTool } from '@inngest/agent-kit'
 import { z } from 'zod'
 import { userSandbox, resolvePath, safeFileName, WORKDIR } from './sandbox.js'
 import { clip, durable } from './web-tools.js'
-import { sendTelegramDocument, TELEGRAM_MAX_UPLOAD } from '../telegram/api.js'
+import type { Channel, ReplyTarget } from '../channels/types.js'
 
 export type SandboxToolContext = {
   // Clerk user whose sandbox the tools use.
   userId: string
-  // The Telegram chat send_file delivers to.
-  target: { chat_id: number; message_thread_id?: number }
+  // The channel and chat send_file delivers to.
+  channel: Channel
+  target: ReplyTarget
   // Names of files sent during this turn, for the transcript.
   sentFiles: string[]
 }
@@ -28,6 +29,7 @@ const MIME: Record<string, string> = {
   jpeg: 'image/jpeg',
   gif: 'image/gif',
   webp: 'image/webp',
+  heic: 'image/heic',
   txt: 'text/plain',
   csv: 'text/csv',
   json: 'application/json',
@@ -169,10 +171,11 @@ export function sandboxTools(ctx: SandboxToolContext) {
       }),
   })
 
+  const { channel } = ctx
   const sendFile = createTool({
     name: 'send_file',
     description:
-      'Send a file from your computer to the user in this Telegram chat (as a document, up to 50 MB). ' +
+      `Send a file from your computer to the user in this ${channel.displayName} chat (up to ${fmtSize(channel.maxUploadBytes)}). ` +
       'Use it whenever the user asked for a file back. Afterwards, mention the file in your reply instead of pasting its contents.',
     parameters: z.object({
       path: z.string(),
@@ -185,11 +188,11 @@ export function sandboxTools(ctx: SandboxToolContext) {
         const sandbox = await userSandbox(ctx.userId)
         const bytes = await sandbox.fs.downloadFile(full)
         if (bytes.length === 0) return 'Error: the file is empty.'
-        if (bytes.length > TELEGRAM_MAX_UPLOAD) {
-          return `Error: ${fmtSize(bytes.length)} is over Telegram's 50 MB limit. Compress or split it.`
+        if (bytes.length > channel.maxUploadBytes) {
+          return `Error: ${fmtSize(bytes.length)} is over ${channel.displayName}'s ${fmtSize(channel.maxUploadBytes)} limit. Compress or split it.`
         }
         const name = safeFileName(file_name ?? full, 'file')
-        await sendTelegramDocument(ctx.target, { name, bytes, mimeType: mimeOf(name) }, caption)
+        await channel.sendFile(ctx.target, { name, bytes, mimeType: mimeOf(name) }, caption)
         return `Sent ${name} (${fmtSize(bytes.length)}) to the chat.`
       })
       // Runs again on replay with the saved result, so the list stays complete.
