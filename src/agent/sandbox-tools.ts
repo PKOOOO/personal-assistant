@@ -5,11 +5,11 @@
 // Like the web tools, each call runs in its own Inngest step (via durable()),
 // so a replayed function run reuses the saved result instead of re-running a
 // command or re-sending a file. Errors come back as text for the model.
-import Anthropic from '@anthropic-ai/sdk'
-import { createTool } from '@inngest/agent-kit'
+import type Anthropic from '@anthropic-ai/sdk'
 import { z } from 'zod'
+import { anthropic, FALLBACK_BETA, MODEL } from './anthropic.js'
 import { userSandbox, resolvePath, safeFileName, WORKDIR } from './sandbox.js'
-import { clip, durable } from './web-tools.js'
+import { clip, defineTool, durable } from './tool.js'
 import type { Channel, ReplyTarget } from '../channels/types.js'
 
 export type SandboxToolContext = {
@@ -48,14 +48,9 @@ const mimeOf = (path: string) => MIME[path.split('.').pop()?.toLowerCase() ?? ''
 const fmtSize = (n: number) =>
   n < 1024 ? `${n} B` : n < 1024 ** 2 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1024 ** 2).toFixed(1)} MB`
 
-// Vision runs as a direct Anthropic SDK call: AgentKit messages and tool
-// results are text-only, so the main model can't receive the image itself.
-// Same model as the agent; the key is CLAUDE_API_KEY in .env.
-let anthropicClient: Anthropic | undefined
-const anthropic = () =>
-  (anthropicClient ??= new Anthropic({
-    apiKey: process.env.CLAUDE_API_KEY ?? process.env.ANTHROPIC_API_KEY,
-  }))
+// Vision runs as a separate model call that gets the file itself; the agent
+// loop's tool results are text, so the main model only sees the answer.
+// Same model as the agent.
 
 const IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'] as const
 type ImageType = (typeof IMAGE_TYPES)[number]
@@ -71,9 +66,9 @@ async function lookAt(bytes: Buffer, mime: string, question: string): Promise<st
       : { type: 'image', source: { type: 'base64', media_type: mime as ImageType, data } }
 
   const response = await anthropic().beta.messages.create({
-    model: 'claude-sonnet-5-5',
+    model: MODEL,
     max_tokens: 8000,
-    betas: ['server-side-fallback-2026-07-01'],
+    betas: [FALLBACK_BETA],
     // Not in this SDK version's types yet; passed through to the request body.
     ...({ fallbacks: 'default' } as object),
     thinking: { type: 'adaptive' },
@@ -101,7 +96,7 @@ async function lookAt(bytes: Buffer, mime: string, question: string): Promise<st
 }
 
 export function sandboxTools(ctx: SandboxToolContext) {
-  const runCommand = createTool({
+  const runCommand = defineTool({
     name: 'run_command',
     description:
       `Run a bash command on your Linux computer (working directory ${WORKDIR}; files the user sent are in inbox/). ` +
@@ -113,7 +108,7 @@ export function sandboxTools(ctx: SandboxToolContext) {
       timeout_seconds: z.number().int().min(5).max(300).optional().describe('Default 120.'),
     }),
     handler: async ({ command, timeout_seconds }, { step }) =>
-      durable(step, 'tool-run-command', async () => {
+      durable(step, 'run_command', async () => {
         const sandbox = await userSandbox(ctx.userId)
         // Pass the script base64-encoded so quoting can't break it; merge stderr in.
         const b64 = Buffer.from(command).toString('base64')
@@ -127,7 +122,7 @@ export function sandboxTools(ctx: SandboxToolContext) {
       }),
   })
 
-  const writeFile = createTool({
+  const writeFile = defineTool({
     name: 'write_file',
     description: `Create or overwrite a text file on your computer (scripts, HTML, CSV, Markdown...). Relative paths are under ${WORKDIR}.`,
     parameters: z.object({
@@ -135,7 +130,7 @@ export function sandboxTools(ctx: SandboxToolContext) {
       content: z.string(),
     }),
     handler: async ({ path, content }, { step }) =>
-      durable(step, 'tool-write-file', async () => {
+      durable(step, 'write_file', async () => {
         const sandbox = await userSandbox(ctx.userId)
         const full = resolvePath(path)
         await sandbox.process.executeCommand(`mkdir -p "$(dirname '${full.replace(/'/g, `'\\''`)}')"`)
@@ -144,7 +139,7 @@ export function sandboxTools(ctx: SandboxToolContext) {
       }),
   })
 
-  const lookAtFile = createTool({
+  const lookAtFile = defineTool({
     name: 'look_at_file',
     description:
       'Look at an image (PNG, JPEG, GIF, WebP) or PDF on your computer and answer a question about what it shows: ' +
@@ -155,7 +150,7 @@ export function sandboxTools(ctx: SandboxToolContext) {
       question: z.string().describe('What you want to know about the file.'),
     }),
     handler: async ({ path, question }, { step }) =>
-      durable(step, 'tool-look-at-file', async () => {
+      durable(step, 'look_at_file', async () => {
         const full = resolvePath(path)
         const mime = mimeOf(full)
         if (mime !== 'application/pdf' && !IMAGE_TYPES.includes(mime as ImageType)) {
@@ -172,7 +167,7 @@ export function sandboxTools(ctx: SandboxToolContext) {
   })
 
   const { channel } = ctx
-  const sendFile = createTool({
+  const sendFile = defineTool({
     name: 'send_file',
     description:
       `Send a file from your computer to the user in this ${channel.displayName} chat (up to ${fmtSize(channel.maxUploadBytes)}). ` +
@@ -183,7 +178,7 @@ export function sandboxTools(ctx: SandboxToolContext) {
       caption: z.string().optional().describe('Short caption, max 1024 characters.'),
     }),
     handler: async ({ path, file_name, caption }, { step }) => {
-      const result = await durable(step, 'tool-send-file', async () => {
+      const result = await durable(step, 'send_file', async () => {
         const full = resolvePath(path)
         const sandbox = await userSandbox(ctx.userId)
         const bytes = await sandbox.fs.downloadFile(full)

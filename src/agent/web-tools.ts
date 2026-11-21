@@ -11,10 +11,11 @@
 // the model to name the actual websites instead.
 //
 // Every call costs Firecrawl credits, so each handler runs inside an Inngest
-// step: a retried function run reuses the saved result instead of paying again.
+// step (durable(), src/agent/tool.ts): a retried function run reuses the saved
+// result instead of paying again.
 import Firecrawl from '@mendable/firecrawl-js'
-import { createTool } from '@inngest/agent-kit'
 import { z } from 'zod'
+import { clip, defineTool, durable } from './tool.js'
 
 // Lazy so the app still boots (and the agent works without tools) when the key
 // is missing; the tools report the problem to the model instead.
@@ -27,38 +28,7 @@ function firecrawl() {
 
 export const webToolsEnabled = () => Boolean(process.env.FIRECRAWL_API_KEY)
 
-// Keep tool results small enough for the model's context and Telegram-sized
-// answers; the model is told when a result was cut.
-const MAX_RESULT_CHARS = 12_000
-
-export function clip(value: unknown): string {
-  const text = typeof value === 'string' ? value : JSON.stringify(value)
-  return text.length <= MAX_RESULT_CHARS
-    ? text
-    : `${text.slice(0, MAX_RESULT_CHARS)}\n[truncated: ${text.length - MAX_RESULT_CHARS} more characters not shown]`
-}
-
-type StepTools = { run: <T>(id: string, fn: () => Promise<T>) => Promise<unknown> }
-
-/**
- * Runs fn as a durable Inngest step when a step context is available.
- * Errors are returned as text for the model to act on (bad inputs, no
- * coverage), not thrown: a thrown step error would make Inngest retry with
- * backoff and delay the Telegram reply for minutes.
- */
-export async function durable(step: unknown, id: string, fn: () => Promise<string>): Promise<string> {
-  const safe = async () => {
-    try {
-      return await fn()
-    } catch (err) {
-      return `Error: ${err instanceof Error ? err.message : String(err)}`
-    }
-  }
-  const s = step as StepTools | undefined
-  return (s ? s.run(id, safe) : safe()) as Promise<string>
-}
-
-const searchWeb = createTool({
+const searchWeb = defineTool({
   name: 'search_web',
   description:
     'Search the web for current information: news, facts that may have changed, ' +
@@ -74,7 +44,7 @@ const searchWeb = createTool({
     country: z.string().optional().describe('ISO 3166-1 alpha-2 country code to localise results, e.g. "US", "GB".'),
   }),
   handler: async ({ query, recency, news, country }, { step }) =>
-    durable(step, 'tool-search-web', async () => {
+    durable(step, 'search_web', async () => {
       const tbs = recency && recency !== 'any' ? `qdr:${recency[0]}` : undefined
       const data = await firecrawl().search(query, {
         sources: [news ? 'news' : 'web'],
@@ -97,7 +67,7 @@ const searchWeb = createTool({
     }),
 })
 
-const readWebpage = createTool({
+const readWebpage = defineTool({
   name: 'read_webpage',
   description:
     'Read the main content of a web page as text. Use it on a URL from search results ' +
@@ -106,13 +76,13 @@ const readWebpage = createTool({
     url: z.string().url().describe('Full URL of the page, including https://'),
   }),
   handler: async ({ url }, { step }) =>
-    durable(step, 'tool-read-webpage', async () => {
+    durable(step, 'read_webpage', async () => {
       const doc = await firecrawl().scrape(url, { formats: ['markdown'], onlyMainContent: true })
       return clip({ url, title: doc.metadata?.title, content: doc.markdown ?? '' })
     }),
 })
 
-const findDataSources = createTool({
+const findDataSources = defineTool({
   name: 'find_data_sources',
   description:
     'Find live data sources for structured, up-to-the-minute data that web search ' +
@@ -128,7 +98,7 @@ const findDataSources = createTool({
     need: z.string().describe('The data needed, e.g. "open restaurant tables tonight for 2 in the East Village, NYC".'),
   }),
   handler: async ({ need }, { step }) =>
-    durable(step, 'tool-find-data-sources', async () => {
+    durable(step, 'find_data_sources', async () => {
       const data = await firecrawl().search(need, {
         sources: ['alexandria'],
         toolDetail: 'compact',
@@ -145,7 +115,7 @@ const findDataSources = createTool({
     }),
 })
 
-const getDataSourceDetails = createTool({
+const getDataSourceDetails = defineTool({
   name: 'get_data_source_details',
   description:
     'Get the inputs and output fields of one data source returned by find_data_sources, ' +
@@ -156,7 +126,7 @@ const getDataSourceDetails = createTool({
     capability: z.string().describe('capability id exactly as returned, e.g. "restaurants/search_venues"'),
   }),
   handler: async ({ provider, capability }, { step }) =>
-    durable(step, 'tool-get-data-source-details', async () => {
+    durable(step, 'get_data_source_details', async () => {
       const data = await firecrawl().findTools({
         providers: [provider],
         capabilities: [capability],
@@ -189,7 +159,7 @@ const getDataSourceDetails = createTool({
     }),
 })
 
-const fetchLiveData = createTool({
+const fetchLiveData = defineTool({
   name: 'fetch_live_data',
   description:
     'Run a data source with the inputs from get_data_source_details and get live structured ' +
@@ -201,7 +171,7 @@ const fetchLiveData = createTool({
     inputs: z.record(z.string(), z.unknown()).describe('Input values keyed by input name.'),
   }),
   handler: async ({ provider, capability, inputs }, { step }) =>
-    durable(step, 'tool-fetch-live-data', async () => {
+    durable(step, 'fetch_live_data', async () => {
       const res = await firecrawl().scrape({
         alexandria: { provider, capability, options: inputs },
       })

@@ -13,6 +13,7 @@
 // Daytona v0 SDK (`@daytona/sdk` 0.x, app.daytona.io). Needs DAYTONA_API_KEY.
 import { Daytona, type Sandbox } from '@daytona/sdk'
 import { isClerkUserId } from '../auth/clerk-device.js'
+import { log } from '../log.js'
 
 export const sandboxEnabled = () => Boolean(process.env.DAYTONA_API_KEY)
 
@@ -47,11 +48,13 @@ export async function userSandbox(userId: string): Promise<Sandbox> {
   }
 
   if (sandbox && ['error', 'build_failed', 'destroyed', 'destroying'].includes(String(sandbox.state))) {
+    log.warn('sandbox unusable, recreating', { clerkUserId: userId, state: String(sandbox.state) })
     await daytona().delete(sandbox).catch(() => {})
     sandbox = undefined
   }
 
   if (!sandbox) {
+    const started = Date.now()
     sandbox = await daytona().create(
       {
         name,
@@ -63,11 +66,17 @@ export async function userSandbox(userId: string): Promise<Sandbox> {
       },
       { timeout: 120 }
     )
-    await sandbox.process.executeCommand(`mkdir -p ${INBOX} && ${BOOTSTRAP}`, undefined, undefined, 180)
+    const setup = await sandbox.process.executeCommand(`mkdir -p ${INBOX} && ${BOOTSTRAP}`, undefined, undefined, 180)
+    log.info('sandbox created', { clerkUserId: userId, durationMs: Date.now() - started, setupExitCode: setup.exitCode })
     return sandbox
   }
 
-  await ensureStarted(sandbox)
+  const state = String(sandbox.state)
+  if (state !== 'started') {
+    const started = Date.now()
+    await ensureStarted(sandbox)
+    log.info('sandbox started', { clerkUserId: userId, fromState: state, durationMs: Date.now() - started })
+  }
   return sandbox
 }
 

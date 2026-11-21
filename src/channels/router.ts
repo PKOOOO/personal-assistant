@@ -15,6 +15,7 @@ import { accountBillingUrl, hasProPlan } from '../auth/clerk-billing.js'
 import { findClerkUserId } from '../db/identities.js'
 import { getChannel } from './index.js'
 import type { InboundMessage } from './types.js'
+import { errorInfo, log } from '../log.js'
 
 export type AuthorizedMessageEvent = {
   name: 'chat/message.authorized'
@@ -40,6 +41,13 @@ export type RouteResult = 'chat/message.authorized' | 'chat/link.requested' | 'u
  * so the webhook can answer 5xx and the platform retries.
  */
 export async function handleInbound(message: InboundMessage): Promise<RouteResult> {
+  // No senderId in logs: on iMessage it is a phone number or email.
+  const attrs = {
+    platform: message.platform,
+    messageId: message.id,
+    hasText: message.text.length > 0,
+    attachments: message.attachments.length,
+  }
   const clerkUserId = await findClerkUserId(message.platform, message.senderId)
 
   if (!clerkUserId) {
@@ -49,11 +57,13 @@ export async function handleInbound(message: InboundMessage): Promise<RouteResul
       data: { message, linkKey: `${message.platform}:${message.senderId}` },
     }
     await inngest.send(event)
+    log.info('message routed', { ...attrs, route: 'link-account', linked: false })
     return event.name
   }
 
   if (!(await hasProPlan(clerkUserId))) {
     await sendUpgradeLink(message)
+    log.info('message routed', { ...attrs, route: 'upgrade-required', linked: true, clerkUserId })
     return 'upgrade-required'
   }
 
@@ -63,6 +73,7 @@ export async function handleInbound(message: InboundMessage): Promise<RouteResul
     data: { message, clerkUserId },
   }
   await inngest.send(event)
+  log.info('message routed', { ...attrs, route: 'chat', linked: true, clerkUserId })
   return event.name
 }
 
@@ -78,6 +89,6 @@ export async function sendUpgradeLink(message: InboundMessage) {
       { link: { label: 'Upgrade to Pro', url: accountBillingUrl() } }
     )
   } catch (err) {
-    console.error(`${message.platform} upgrade reply failed:`, err)
+    log.error('upgrade reply failed', { platform: message.platform, messageId: message.id, ...errorInfo(err) })
   }
 }

@@ -19,6 +19,7 @@ import { getChannel } from '../channels/index.js'
 import { messageEventId, sendUpgradeLink, type LinkRequestedEvent } from '../channels/router.js'
 import { isCommand, type SendOptions } from '../channels/types.js'
 import { findClerkUserId, linkAccount } from '../db/identities.js'
+import { log } from '../log.js'
 
 // Each polling step runs at most this long; the function then continues in a
 // new step. Keeps every HTTP call from Inngest short, and the step count low
@@ -40,6 +41,9 @@ export const linkAccountFn = inngest.createFunction(
     const { platform, senderId } = message
     const channel = getChannel(platform)
     const send = (text: string, options?: SendOptions) => channel.sendText(message.target, text, options)
+    // Logged from inside steps, so each line is written once. No senderId:
+    // on iMessage it is a phone number or email.
+    const logAttrs = { platform, messageId: message.id }
 
     // An earlier run may have linked this account while this event waited.
     const already = await step.run('check-link', () => findClerkUserId(platform, senderId))
@@ -49,9 +53,10 @@ export const linkAccountFn = inngest.createFunction(
     }
 
     if (!deviceAuthEnabled()) {
-      await step.run('reply-unavailable', () =>
-        send("This assistant is private, and connecting new accounts isn't available right now.")
-      )
+      await step.run('reply-unavailable', async () => {
+        await send("This assistant is private, and connecting new accounts isn't available right now.")
+        log.warn('account link unavailable', { ...logAttrs, reason: 'device flow not configured' })
+      })
       return { status: 'device flow not configured' }
     }
 
@@ -60,8 +65,8 @@ export const linkAccountFn = inngest.createFunction(
     const device = await step.run('start-device-flow', () => startDeviceAuthorization())
     const minutes = Math.max(1, Math.round((device.expiresAt - Date.now()) / 60_000))
 
-    await step.run('send-connect-link', () =>
-      send(
+    await step.run('send-connect-link', async () => {
+      await send(
         [
           'Connect your account to use this assistant.',
           '',
@@ -72,7 +77,8 @@ export const linkAccountFn = inngest.createFunction(
         ].join('\n'),
         { link: { label: 'Connect your account', url: device.verificationUriComplete } }
       )
-    )
+      log.info('account link sent', { ...logAttrs, expiresInMinutes: minutes })
+    })
 
     let result: PollResult = { status: 'pending', interval: device.interval }
     for (let i = 0; i < MAX_POLL_STEPS && result.status === 'pending'; i++) {
@@ -89,12 +95,22 @@ export const linkAccountFn = inngest.createFunction(
           : result.status === 'error'
             ? 'Something went wrong connecting your account. Send any message to try again.'
             : 'That link expired. Send any message to get a new one.'
-      await step.run('reply-not-linked', () => send(text))
+      await step.run('reply-not-linked', async () => {
+        await send(text)
+        const attrs = { ...logAttrs, status: result.status, pollSteps: MAX_POLL_STEPS }
+        if (result.status === 'error') log.error('account link failed', { ...attrs, error: result.error })
+        else log.info('account link not completed', attrs)
+      })
       return { status: result.status, ...(result.status === 'error' && { error: result.error }) }
     }
 
     const approvedUserId = result.clerkUserId
-    const clerkUserId = await step.run('save-link', () => linkAccount(platform, senderId, approvedUserId))
+    const clerkUserId = await step.run('save-link', async () => {
+      const saved = await linkAccount(platform, senderId, approvedUserId)
+      // An existing link wins over the newly approved user.
+      log.info('account linked', { ...logAttrs, clerkUserId: saved, keptExistingLink: saved !== approvedUserId })
+      return saved
+    })
 
     await step.run('reply-linked', () =>
       send("You're connected. Your conversations and files are now tied to your account.")
@@ -108,7 +124,10 @@ export const linkAccountFn = inngest.createFunction(
       if (isCommand(message)) return
       const pro = await step.run('check-plan', () => hasProPlan(clerkUserId))
       if (!pro) {
-        await step.run('reply-upgrade', () => sendUpgradeLink(message))
+        await step.run('reply-upgrade', async () => {
+          await sendUpgradeLink(message)
+          log.info('linked message not forwarded', { ...logAttrs, clerkUserId, reason: 'no Pro plan' })
+        })
         return
       }
       await step.sendEvent('forward-message', {

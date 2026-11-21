@@ -13,6 +13,7 @@ import LinqAPIV3, { APIError } from '@linqapp/sdk'
 import type { SupportedContentType } from '@linqapp/sdk/resources/attachments'
 import type { MessageReceivedWebhookEvent, UnwrapWebhookEvent } from '@linqapp/sdk/resources/webhooks'
 import type { Channel, InboundMessage, ReplyTarget } from '../channels/types.js'
+import { log } from '../log.js'
 
 export const linqEnabled = () => Boolean(process.env.LINQ_API_V3_API_KEY && process.env.LINQ_WEBHOOK_SECRET)
 
@@ -55,7 +56,9 @@ export function parseLinqWebhook(rawBody: string, headers: Record<string, string
   if (event.event_type !== 'message.received') return null
   const { data } = event as MessageReceivedWebhookEvent
   if (!data?.chat?.id || data.direction !== 'inbound') {
-    if (!data?.direction) console.warn('linq webhook: unexpected payload; is the subscription URL using ?version=2026-02-03?')
+    if (!data?.direction) {
+      log.warn('webhook payload not understood', { platform: 'imessage', hint: 'subscription URL must end in ?version=2026-02-03' })
+    }
     return null
   }
   // Groups: the bot is one-to-one only. Reconciled messages arrive late, out of
@@ -94,7 +97,7 @@ async function send(target: ReplyTarget, parts: Parameters<LinqAPIV3['chats']['m
     await linq().chats.messages.send(chatId(target), { message: { parts } })
   } catch (err) {
     if (err instanceof APIError && err.status === 403 && err.code !== undefined && UNSENDABLE.has(err.code)) {
-      console.warn(`linq: not sending to chat ${chatId(target)} (error ${err.code}): ${err.message}`)
+      log.warn('message not sendable', { platform: 'imessage', chatId: chatId(target), linqCode: err.code, error: err.message })
       return
     }
     throw err

@@ -1,40 +1,36 @@
-// The chat agent (all channels), built with Inngest AgentKit.
-import { anthropic, createAgent, type AgentResult, type Message } from '@inngest/agent-kit'
+// The chat agent (all channels): a tool-use loop on the Anthropic Messages API.
+//
+// Each model call is one Inngest step (`model-call-<n>`) that calls Anthropic
+// directly with @anthropic-ai/sdk, and each tool call is one more step
+// (durable(), src/agent/tool.ts). Replays reuse saved step results, so nothing
+// is called or paid for twice.
+//
+// Monitoring (Sentry AI agent monitoring, metadata only): the whole loop is an
+// `invoke_agent assistant` span; Sentry's Anthropic integration adds a
+// `gen_ai.chat` span per model call (tokens, cost, latency) and durable() a
+// `gen_ai.execute_tool` span per tool call. The conversation id is the Clerk
+// user id (set in src/inngest/chat.ts).
+import * as Sentry from '@sentry/hono/node'
+import type Anthropic from '@anthropic-ai/sdk'
 import type { GetStepTools, Inngest } from 'inngest'
 import type { TranscriptEntry } from './transcript.js'
+import { anthropic, FALLBACK_BETA, MODEL } from './anthropic.js'
+import { AGENT_NAME, toolDefinition, type AgentTool } from './tool.js'
 import { webTools, webToolsEnabled } from './web-tools.js'
 import { sandboxEnabled } from './sandbox.js'
 import { sandboxTools, type SandboxToolContext } from './sandbox-tools.js'
 import type { Channel } from '../channels/types.js'
+import { log } from '../log.js'
 
-// Claude Sonnet 5.5: strong at tool use and everyday assistant work, at
-// $2 / $10 per MTok.
-// AgentKit calls the model through `step.ai.infer`, so Inngest makes the
-// request to Anthropic on our behalf (the key is sent to Inngest for that).
-//
-// Thinking: Sonnet 5.5 always returns `thinking` blocks (it can't disable
-// thinking). AgentKit 0.13's Anthropic parser crashed on them, so it is patched
-// to skip unknown blocks (patches/@inngest+agent-kit+0.13.2.patch, re-applied
-// by `postinstall`). AgentKit doesn't send thinking blocks back; the API accepts
-// a history with all thinking blocks removed, and the model thinks afresh.
-const model = anthropic({
-  model: 'claude-sonnet-5-5',
-  // .env stores the key as CLAUDE_API_KEY; fall back to the SDK's default env var.
-  apiKey: process.env.CLAUDE_API_KEY ?? process.env.ANTHROPIC_API_KEY,
-  // Server-side refusal fallback: if Sonnet 5.5's safety classifiers decline
-  // a request, the API retries it on a fallback model in the same call.
-  betaHeaders: ['server-side-fallback-2026-07-01'],
-  // Merged into the request body by the model's onCall hook.
-  defaultParameters: {
-    // Room for thinking plus the reply.
-    max_tokens: 16000,
-    thinking: { type: 'adaptive' },
-    // Sonnet 5.5 defaults to high; medium is the suggested start for
-    // multi-step tool use and keeps chat replies quick.
-    output_config: { effort: 'medium' },
-    fallbacks: 'default',
-  } as { max_tokens: number },
-})
+type Message = Anthropic.Beta.BetaMessage
+type MessageParam = Anthropic.Beta.BetaMessageParam
+type ContentBlock = Anthropic.Beta.BetaContentBlock
+
+// Request settings for every model call.
+const MAX_TOKENS = 16000 // room for thinking plus the reply
+// Sonnet 5.5 defaults to high; medium is the suggested start for multi-step
+// tool use and keeps chat replies quick.
+const EFFORT = 'medium'
 
 // Model calls per user message. Each call may run several tools; a lookup like
 // "find a table tonight" typically takes 3-5 calls (find source, read inputs,
@@ -113,83 +109,185 @@ function localTimeTable(now: Date) {
   }).join('\n')
 }
 
-/** Joins the assistant's text output from one model call. */
-export function replyText(result: AgentResult): string {
-  return result.output
-    .filter(
-      (m): m is Extract<Message, { type: 'text' }> =>
-        m.type === 'text' && m.role === 'assistant'
-    )
-    .map((m) =>
-      typeof m.content === 'string' ? m.content : m.content.map((c) => c.text).join('')
-    )
+/** What one turn cost and did; logged by the chat function. */
+export type TurnStats = {
+  modelCalls: number
+  toolCalls: number
+  inputTokens: number
+  outputTokens: number
+  cacheReadTokens: number
+  stopReason: string | null
+  refused: boolean
+  fellBack: boolean
+  hitCallLimit: boolean
+}
+
+/** The text of the model's reply, ignoring thinking and tool calls. */
+function replyText(message: Message): string {
+  return message.content
+    .flatMap((b) => (b.type === 'text' ? [b.text] : []))
     .join('\n')
     .trim()
 }
 
 /**
- * Answers one user message, with the chat's transcript as memory.
+ * The assistant turn as it is sent back in the next request. Thinking blocks
+ * are kept (the API checks them during tool use). After a server-side fallback
+ * (a `fallback` block marks where the fallback model took over), thinking,
+ * tool_use and other model-internal blocks before the last `fallback` block are
+ * left out, and the `fallback` block stays where it was.
+ */
+function echoContent(content: ContentBlock[]): ContentBlock[] {
+  const boundary = content.map((b) => b.type).lastIndexOf('fallback')
+  if (boundary === -1) return content
+  return content.filter((b, i) => i >= boundary || b.type === 'text')
+}
+
+/**
+ * Answers one user message, with the user's transcript as memory.
  *
- * The tool loop is driven here rather than by AgentKit: for a standalone agent
- * AgentKit defaults to a single model call (maxIter 0), and on later
- * iterations it resends the tool calls without their results, which the
- * Messages API rejects. So each agent.run() below does exactly one model call
- * plus the tools it asked for, and `conversation` carries everything forward:
- * [past turns, new user message, assistant tool calls, tool results, ...].
- *
- * AgentKit's own history (state results / HistoryConfig) isn't used either: it
- * keeps only assistant output and puts it after the new message.
+ * `conversation` carries the turn forward: [past turns, new user message,
+ * assistant turn (thinking, text, tool calls), tool results, ...]. It is
+ * rebuilt the same way on every replay from the saved step results.
  */
 export async function answer(
   transcript: TranscriptEntry[],
   userText: string,
-  // The Inngest function's step tools. AgentKit only hands `step` to tool
-  // handlers when it is passed to run(); without it, lookups run outside
-  // steps and are repeated (and paid for again) on every function replay.
+  // The Inngest function's step tools; model and tool calls run as steps.
   step: GetStepTools<Inngest.Any>,
   // Whose sandbox the tools use, and the channel and chat send_file delivers to.
   // sentFiles is filled in as files are sent.
   chat: SandboxToolContext
-): Promise<string> {
-  const conversation: Message[] = [
-    ...transcript.map((e): Message => ({ type: 'text', role: e.role, content: e.content })),
-    { type: 'text', role: 'user', content: userText },
+): Promise<{ text: string; stats: TurnStats }> {
+  const conversation: MessageParam[] = [
+    ...transcript.map((e): MessageParam => ({ role: e.role, content: e.content })),
+    { role: 'user', content: userText },
   ]
-
-  const agent = createAgent({
-    name: 'assistant',
-    system: systemPrompt(chat.channel),
-    model,
-    tools: [
-      ...(webToolsEnabled() ? webTools : []),
-      ...(sandboxEnabled() ? sandboxTools(chat) : []),
-    ],
-    lifecycle: {
-      // agent.run('') builds a prompt of just [system]; append the conversation.
-      onStart: ({ prompt }) => ({
-        prompt: [...prompt, ...conversation],
-        history: [],
-        stop: false,
-      }),
-    },
-  })
-
-  for (let call = 1; call <= MAX_MODEL_CALLS; call++) {
-    // Each run is one durable step.ai.infer call, plus one step per tool call.
-    const result = await agent.run('', { step })
-    conversation.push(...result.output, ...result.toolCalls)
-
-    if (result.toolCalls.length === 0) return replyText(result)
-
-    if (call === MAX_MODEL_CALLS - 1) {
-      // Last call: make it answer with what it has instead of looking further.
-      conversation.push({
-        type: 'text',
-        role: 'user',
-        content:
-          '(System note: no more tool calls are possible for this message. Answer now from what you have, and say what you could not finish.)',
-      })
-    }
+  const tools: AgentTool[] = [
+    ...(webToolsEnabled() ? webTools : []),
+    ...(sandboxEnabled() ? sandboxTools(chat) : []),
+  ]
+  const toolsByName = new Map(tools.map((t) => [t.name, t]))
+  const system = systemPrompt(chat.channel)
+  const stats: TurnStats = {
+    modelCalls: 0,
+    toolCalls: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+    cacheReadTokens: 0,
+    stopReason: null,
+    refused: false,
+    fellBack: false,
+    hitCallLimit: false,
   }
-  return ''
+
+  return Sentry.startSpan(
+    {
+      op: 'gen_ai.invoke_agent',
+      name: `invoke_agent ${AGENT_NAME}`,
+      attributes: {
+        'gen_ai.operation.name': 'invoke_agent',
+        'gen_ai.agent.name': AGENT_NAME,
+        'gen_ai.provider.name': 'anthropic',
+        'gen_ai.request.model': MODEL,
+        'gen_ai.request.reasoning.level': EFFORT,
+        'chat.platform': chat.channel.platform,
+        'chat.context_messages': transcript.length,
+        'chat.tools_available': tools.length,
+      },
+    },
+    async (span) => {
+      let text = ''
+      for (let call = 1; call <= MAX_MODEL_CALLS; call++) {
+        const message = (await step.run(`model-call-${call}`, () =>
+          anthropic().beta.messages.create({
+            model: MODEL,
+            max_tokens: MAX_TOKENS,
+            system,
+            messages: conversation,
+            // Kept on the last call too: the history has tool calls, which need
+            // their tool definitions. The system note below makes it answer.
+            ...(tools.length ? { tools: tools.map(toolDefinition) } : {}),
+            thinking: { type: 'adaptive' },
+            output_config: { effort: EFFORT },
+            betas: [FALLBACK_BETA],
+            // Not in this SDK version's types yet; passed through to the request body.
+            ...({ fallbacks: 'default' } as object),
+          } as Anthropic.Beta.MessageCreateParamsNonStreaming)
+        )) as unknown as Message
+
+        stats.modelCalls = call
+        stats.inputTokens += message.usage.input_tokens + (message.usage.cache_read_input_tokens ?? 0)
+        stats.outputTokens += message.usage.output_tokens
+        stats.cacheReadTokens += message.usage.cache_read_input_tokens ?? 0
+        stats.stopReason = message.stop_reason
+        if (message.content.some((b) => b.type === 'fallback')) stats.fellBack = true
+
+        conversation.push({ role: 'assistant', content: echoContent(message.content) })
+        const toolUses = (conversation.at(-1)!.content as ContentBlock[]).filter(
+          (b): b is Anthropic.Beta.BetaToolUseBlock => b.type === 'tool_use'
+        )
+
+        if (message.stop_reason === 'refusal') {
+          stats.refused = true
+          text = replyText(message)
+          break
+        }
+        if (toolUses.length === 0) {
+          text = replyText(message)
+          break
+        }
+
+        // Run the requested tools in order (each is its own step) and send all
+        // results back in one user message.
+        const results: Anthropic.Beta.BetaToolResultBlockParam[] = []
+        for (const use of toolUses) {
+          stats.toolCalls++
+          const tool = toolsByName.get(use.name)
+          const input = tool?.parameters.safeParse(use.input)
+          const content = !tool
+            ? `Error: unknown tool ${use.name}`
+            : !input!.success
+              ? `Error: invalid input: ${input!.error.message}`
+              : await tool.handler(input!.data, { step })
+          results.push({
+            type: 'tool_result',
+            tool_use_id: use.id,
+            content,
+            ...(content.startsWith('Error:') && { is_error: true }),
+          })
+        }
+        conversation.push({ role: 'user', content: results })
+
+        if (call === MAX_MODEL_CALLS - 1) {
+          stats.hitCallLimit = true
+          // Next call is the last: make it answer with what it has.
+          conversation.push({
+            role: 'user',
+            content:
+              '(System note: no more tool calls are possible for this message. Answer now from what you have, and say what you could not finish.)',
+          })
+        }
+      }
+
+      span.setAttributes({
+        'gen_ai.usage.input_tokens': stats.inputTokens,
+        'gen_ai.usage.output_tokens': stats.outputTokens,
+        'gen_ai.usage.cache_read.input_tokens': stats.cacheReadTokens,
+        'gen_ai.usage.total_tokens': stats.inputTokens + stats.outputTokens,
+        'gen_ai.response.finish_reasons': JSON.stringify([stats.stopReason]),
+        'agent.model_calls': stats.modelCalls,
+        'agent.tool_calls': stats.toolCalls,
+      })
+      if (stats.refused) span.setStatus({ code: 2, message: 'refusal' })
+      return { text, stats }
+    }
+  )
+}
+
+/** Warns about a turn that didn't end normally. Call it from inside a step, so it logs once. */
+export function logUnusualStop(stats: TurnStats, attrs: Record<string, string | number>) {
+  if (stats.refused) log.warn('model refused the request', { ...attrs, stopReason: stats.stopReason })
+  else if (stats.stopReason === 'max_tokens') log.warn('model hit max_tokens', attrs)
+  if (stats.hitCallLimit) log.warn('agent hit the model call limit', { ...attrs, limit: MAX_MODEL_CALLS })
 }

@@ -11,6 +11,7 @@
 import { appendFile, mkdir, readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { isClerkUserId } from '../auth/clerk-device.js'
+import { log } from '../log.js'
 
 export type TranscriptEntry = {
   role: 'user' | 'assistant'
@@ -50,6 +51,7 @@ async function readAll(userId: string): Promise<TranscriptEntry[]> {
     throw err
   }
   const entries: TranscriptEntry[] = []
+  let corrupt = 0
   for (const line of raw.split('\n')) {
     if (!line.trim()) continue
     try {
@@ -59,8 +61,10 @@ async function readAll(userId: string): Promise<TranscriptEntry[]> {
       }
     } catch {
       // Skip a torn or corrupt line instead of losing the whole conversation.
+      corrupt++
     }
   }
+  if (corrupt) log.warn('transcript has corrupt lines', { clerkUserId: userId, corrupt, entries: entries.length })
   return entries
 }
 

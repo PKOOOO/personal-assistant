@@ -8,14 +8,16 @@
 //
 // Memory (transcript) and the sandbox belong to the Clerk user, not the chat,
 // so they are shared by every account (Telegram, iMessage) linked to the user.
+import * as Sentry from '@sentry/hono/node'
 import { NonRetriableError } from 'inngest'
 import { inngest } from './client.js'
-import { answer } from '../agent/assistant.js'
+import { answer, logUnusualStop } from '../agent/assistant.js'
 import { appendTranscript, loadTranscript } from '../agent/transcript.js'
 import { INBOX, safeFileName, sandboxEnabled, userSandbox, WORKDIR } from '../agent/sandbox.js'
 import { isClerkUserId } from '../auth/clerk-device.js'
 import { getChannel } from '../channels/index.js'
 import type { AuthorizedMessageEvent } from '../channels/router.js'
+import { errorInfo, log } from '../log.js'
 
 export const chat = inngest.createFunction(
   {
@@ -27,8 +29,14 @@ export const chat = inngest.createFunction(
     retries: 3,
     // After the last retry fails, tell the user instead of going silent.
     onFailure: async ({ event, error }) => {
-      const { message } = event.data.event.data as AuthorizedMessageEvent['data']
-      console.error('chat failed:', error.message)
+      const { message, clerkUserId } = event.data.event.data as AuthorizedMessageEvent['data']
+      log.error('chat turn failed', {
+        platform: message?.platform,
+        messageId: message?.id,
+        clerkUserId,
+        nonRetriable: error instanceof NonRetriableError,
+        ...errorInfo(error),
+      })
       if (!message || error instanceof NonRetriableError) return
       await getChannel(message.platform)
         .sendText(message.target, 'Sorry, something went wrong generating a reply.')
@@ -42,21 +50,34 @@ export const chat = inngest.createFunction(
     if (!isClerkUserId(clerkUserId ?? '')) throw new NonRetriableError('Missing or invalid clerkUserId')
     if (!message?.platform || !message.target) throw new NonRetriableError('Missing message')
 
+    // Runs on every request of the run (cheap, no output): ties errors, logs and
+    // AI spans to the user, and groups their AI spans into one Sentry
+    // Conversation (the transcript is per user).
+    Sentry.setUser({ id: clerkUserId })
+    Sentry.setConversationId(clerkUserId)
+    Sentry.setTag('chat.platform', message.platform)
+
     const channel = getChannel(message.platform)
     const { text, attachments, target } = message
-    const reply = (stepId: string, body: string) =>
-      step.run(stepId, () => channel.sendText(target, body, { replyToMessage: message }))
+    // Attributes on every log line of this turn.
+    const logAttrs = { platform: message.platform, messageId: message.id, clerkUserId }
+    const reply = (stepId: string, body: string, skipped?: string) =>
+      step.run(stepId, async () => {
+        await channel.sendText(target, body, { replyToMessage: message })
+        if (skipped) log.info('chat turn skipped', { ...logAttrs, reason: skipped })
+      })
 
     if (!text && attachments.length === 0) {
       await reply(
         'reply-unsupported',
-        'I can read text messages and files (documents, photos, audio, video), but not this kind of message.'
+        'I can read text messages and files (documents, photos, audio, video), but not this kind of message.',
+        'unsupported message type'
       )
       return { skipped: 'unsupported message type' }
     }
 
     if (attachments.length > 0 && !sandboxEnabled()) {
-      await reply('reply-files-unavailable', "I can't open files right now. Please paste the text instead.")
+      await reply('reply-files-unavailable', "I can't open files right now. Please paste the text instead.", 'file tools not configured')
       return { skipped: 'file tools not configured' }
     }
 
@@ -83,8 +104,15 @@ export const chat = inngest.createFunction(
                 results.push({ path: `inbox/${name}`, name, size: bytes.length, mimeType: a.mimeType })
               } catch (err) {
                 results.push({ name: a.name, error: err instanceof Error ? err.message : String(err) })
+                log.warn('attachment not saved', { ...logAttrs, mimeType: a.mimeType, size: a.size, ...errorInfo(err) })
               }
             }
+            log.info('attachments saved', {
+              ...logAttrs,
+              received: attachments.length,
+              saved: results.filter((r) => r.path).length,
+              totalBytes: results.reduce((n, r) => n + (r.size ?? 0), 0),
+            })
             return results
           })
 
@@ -109,9 +137,13 @@ export const chat = inngest.createFunction(
     // Durable step.ai.infer calls (named after the agent), plus one step per
     // web/data lookup the model makes.
     const sentFiles: string[] = []
-    const replyText =
-      (await answer(transcript, userText, step, { userId: clerkUserId, channel, target, sentFiles })) ||
-      (sentFiles.length ? 'Here you go.' : "Sorry, I couldn't come up with a reply.")
+    const { text: answerText, stats } = await answer(transcript, userText, step, {
+      userId: clerkUserId,
+      channel,
+      target,
+      sentFiles,
+    })
+    const replyText = answerText || (sentFiles.length ? 'Here you go.' : "Sorry, I couldn't come up with a reply.")
 
     // One key per message, so a retried step doesn't write it twice.
     const messageKey = `${message.platform}:${message.id}`
@@ -130,9 +162,31 @@ export const chat = inngest.createFunction(
       ])
     })
 
-    await reply('send-reply', replyText)
+    await step.run('send-reply', async () => {
+      await channel.sendText(target, replyText, { replyToMessage: message })
+      // One line per answered message, with what the turn did and cost.
+      const turnAttrs = {
+        ...logAttrs,
+        contextMessages: transcript.length,
+        attachments: saved.length,
+        modelCalls: stats.modelCalls,
+        toolCalls: stats.toolCalls,
+        inputTokens: stats.inputTokens,
+        outputTokens: stats.outputTokens,
+        cacheReadTokens: stats.cacheReadTokens,
+        stopReason: stats.stopReason ?? 'none',
+        fellBack: stats.fellBack,
+        filesSent: sentFiles.length,
+        replyChars: replyText.length,
+        emptyAnswer: !answerText,
+        // From the webhook accepting the message to the reply being sent.
+        latencyMs: Date.now() - (event.ts ?? Date.now()),
+      }
+      logUnusualStop(stats, logAttrs)
+      log.info('chat turn answered', turnAttrs)
+    })
 
-    return { platform: message.platform, clerkUserId, contextMessages: transcript.length, files: saved, sentFiles, reply: replyText }
+    return { platform: message.platform, clerkUserId, contextMessages: transcript.length, files: saved, sentFiles, reply: replyText, stats }
   }
 )
 
