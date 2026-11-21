@@ -4,7 +4,7 @@ Run `npx hono --help` first, and use the CLI instead of a dev server.
 
 - The Hono CLI can't bundle several SDKs ("Dynamic require of child_process" otherwise); mark them all external: `npx hono request -e inngest -e @anthropic-ai/sdk -e @daytona/sdk -e @mendable/firecrawl-js -e @sentry/hono -e @sentry/core "/path" src/app.ts`.
 - Exception: Inngest must reach the app over HTTP to run functions, so for Inngest work the app has to be running (`npm run dev`, port 3000).
-- The app's routes (`src/app.ts`): `/api/inngest`, `POST /telegram/webhook`, `POST /linq/webhook`, `GET`+`POST /whatsapp/webhook` and `POST /webhooks/paystack`; everything else returns 404. The tutorial routes `/`, `/marco` and `/test/ai` were removed; don't add public test routes to production.
+- The app's routes (`src/app.ts`): `/api/inngest`, `POST /telegram/webhook`, `POST /linq/webhook`, `GET`+`POST /whatsapp/webhook`, `POST /webhooks/paystack` and `GET /privacy` (public privacy policy, `src/privacy.ts`, the Privacy Policy URL for the Meta app; contact hardhaven4@gmail.com; keep it in line with what the code stores and who processes it); everything else returns 404. The tutorial routes `/`, `/marco` and `/test/ai` were removed; don't add public test routes to production.
 
 ## Background jobs: Inngest (Trigger.dev was removed)
 

@@ -14,12 +14,16 @@ import { isWhatsAppSignature, parseWhatsAppWebhook, verifyWhatsAppSubscription, 
 import { errorInfo, log } from './log.js'
 import { isPaystackSignature, paystackEnabled } from './billing/paystack.js'
 import { settlePayment } from './billing/pro.js'
+import { privacyPolicyHtml } from './privacy.js'
 
 const app = new Hono()
 
 // Sentry (initialised in src/instrument.ts): traces requests and reports errors
 // that reach Hono's onError.
 app.use(Sentry.sentry(app))
+
+// Public privacy policy (Meta needs a Privacy Policy URL to publish the WhatsApp app).
+app.get('/privacy', (c) => c.html(privacyPolicyHtml))
 
 // Inngest calls this endpoint to discover and run background functions.
 // serveOrigin: the public URL Inngest registers (also when the app syncs
