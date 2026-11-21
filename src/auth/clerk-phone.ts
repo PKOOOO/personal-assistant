@@ -9,7 +9,7 @@
 // 2026-11-21: email optional at sign-up, usernames on (username "u<digits>").
 //
 // Env: CLERK_SECRET_KEY.
-import { isClerkUserId } from './clerk-device.js'
+import { isClerkUserId } from './clerk-ids.js'
 
 const API = 'https://api.clerk.com/v1'
 
