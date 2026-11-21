@@ -95,7 +95,7 @@ Inngest setup (SDK `inngest` v4):
 - This machine can't push to GitHub (no credentials, no `gh`); commit locally and ask the user to run `git push origin main`.
 - Check a deploy: `railway deployment list` (the newest should be SUCCESS, and `--json` shows its `meta.commitHash`), `railway logs <id> --build` and `railway logs <id> --deployment` (should end with "Server is running on http://localhost:8080"). Healthy production answers 404 on `/` and `{"message":"Unauthorized"}` (401) on an unsigned GET `/api/inngest`.
 - Inngest Cloud runs the functions; the app syncs at `/api/inngest` with `INNGEST_EVENT_KEY` and `INNGEST_SIGNING_KEY`. If a removed function still shows in the dashboard after a deploy, resync the app there.
-- Last verified deploy: 2026-11-21, commit `64d0d43` (M-Pesa via Paystack; the user paid KES 2 live and it worked).
+- Last verified deploy: 2026-11-21, commit `1b6486f` (WhatsApp channel: the user signed up in WhatsApp, switched M-Pesa number mid-payment, paid KES 2 live and got Pro).
 - The app syncs itself with Inngest Cloud on startup (`src/inngest/sync.ts`, since 2026-11-21): it PUTs its own `/api/inngest` over localhost, and `serve({ serveOrigin })` (public origin from `PUBLIC_URL` or `RAILWAY_PUBLIC_DOMAIN`) makes Inngest register the public URL. Look for the `inngest synced` log line after a deploy (`inngest sync failed` / `gave up` otherwise). Skipped with `INNGEST_DEV` or `INNGEST_SYNC_ON_START=0`. Manual fallback: `curl -X PUT https://personal-assistant-production-b793.up.railway.app/api/inngest` or Resync in the dashboard.
 
 ## Sentry (errors, tracing, logs, AI agent monitoring)
