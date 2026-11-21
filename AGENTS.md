@@ -157,6 +157,21 @@ Pitch outline (after results): problem (millions of small businesses can't see r
 
 Open question for the user (ask it first when this comes up again): which group do they personally know or can reach this week? Offered next: interview questions, the 2-week test plan, and a pitch page or deck. Until the user picks a group, don't build segment-specific features.
 
+### Real AI cost per reply (measured 2026-11-22) and TODOs
+
+Measured from the `chat turn answered` log lines in Railway's output (all 9 production replies so far), at Claude Sonnet 5.5 prices (US$2 / US$10 per million input / output tokens) and KES 130 = US$1:
+
+- Simple replies (1 model call, no tools): 5,450-6,500 input tokens, 13-300 output, **KES 1.4-2.1** each.
+- Live lookups (3 model calls, 2-4 tools): about 22,000-23,000 input, 560-1,040 output, **KES 6.6-7.4** each, plus Firecrawl credits (not included).
+- Average KES 2.8 per reply. A "hi" with no history already sends about 5,450 tokens: the system prompt (with the timezone table) plus all tool definitions are the fixed overhead; the user's text and the reply are small by comparison. `cacheReadTokens` is 0 on every reply: prompt caching is off.
+- Heavy user (300 messages/month, 80% simple, 20% lookups): about KES 780/month today, estimated about KES 340 with prompt caching. A light user (1-2 messages/day) fits within KES 200/month. Set the Pro price after measuring pilot users.
+
+TODO (the user asked to record these, not build them yet; do them when asked):
+
+1. **Turn on prompt caching** in `src/agent/assistant.ts` (and the vision call in `sandbox-tools.ts` if worthwhile): put `cache_control: { type: 'ephemeral' }` breakpoints on the stable prefix (last tool definition and/or the end of the system prompt; consider moving the per-request date/time table after the cached part so it doesn't break the cache, and a breakpoint on the last history message so earlier turns are reused across the tool loop). Check the claude-api skill / docs for current caching rules (minimum cacheable length, TTL, pricing). Verify with `cacheReadTokens` > 0 in the `chat turn answered` logs and compare cost per reply before/after.
+2. **Fix token numbers in Sentry Logs**: the `chat turn answered` log has correct `inputTokens` / `outputTokens` / `cacheReadTokens` in stdout (Railway), but Sentry's log search (`sentry explore --dataset logs -F "tags[inputTokens,number]"`) returns 0 for them, while `modelCalls` / `toolCalls` / `contextMessages` come through. `sentry attribute list --dataset logs` doesn't list the token attributes at all. Find out why (attribute type/name, value size, how `src/log.ts` passes attributes to `Sentry.logger`), fix it, and confirm with a query that returns the real numbers. Until then, read costs from Railway logs (`railway logs <deployment id> --deployment | grep "chat turn answered"`) or from AI spans (`sentry explore ... --dataset spans -F "sum(gen_ai.cost.total_tokens)" -q "gen_ai.operation.type:ai_client"`, sampled 10% in production).
+3. Later, if costs still matter: a cheaper model for simple messages (keep Sonnet for lookups and files), shorter history with a long-term memory note (see below), per-plan message limits.
+
 ### Conversation management (planned, not built)
 
 Today each Clerk user has one endless conversation: one transcript file, and only the last 40 messages (`MAX_CONTEXT_MESSAGES` in `src/agent/transcript.ts`) go to the model. It never overflows, but older facts are forgotten, unrelated topics get mixed in the same window, and every reply pays for up to 40 old messages. Planned fixes, in order:
