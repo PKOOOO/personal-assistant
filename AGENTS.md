@@ -125,7 +125,7 @@ Status 2026-11-22: the project is becoming **Holler**, a Kenyan assistant on Wha
 
 Why it's worth having over ChatGPT/Claude with web search (same Firecrawl data sources, ~$0.10 per lookup message): it lives where Kenyans already are (WhatsApp), pays with M-Pesa, has local depth (Buupass, maps data, KES, local time), and can act and work proactively.
 
-Next steps, roughly in order (the user decides; don't start features unprompted):
+Next steps, roughly in order (the user decides; don't start features unprompted; the business-model choice below may reorder them):
 
 1. Custom domain for Holler (the user is buying one): point it at Railway, use it for the homepage/privacy URLs in the Meta app and for WhatsApp display-name review.
 2. WhatsApp to production: never-expiring System User token (current one expires 2027-01-20), real phone number with display name "Holler" and profile photo, payment method in Meta's Billing Hub, business verification.
@@ -135,6 +135,27 @@ Next steps, roughly in order (the user decides; don't start features unprompted)
 6. Account merge for browser-linked users (see "Chat channels"), and conversation management (below).
 
 Decided against / replaced: Safaricom Daraja directly (Paystack handles M-Pesa); Apple Messages for Business (iMessage goes through Linq instead); Clerk Billing (replaced by M-Pesa Pro).
+
+### Business model: which problem Holler solves (discussed 2026-11-22, undecided)
+
+The platform works, but "a smart assistant" isn't a reason to pay. Most Kenyan users judge a phone service by money: does it make me money, save me money, or get me money I'm owed? So pick a group with a money problem first and make Holler the way it gets solved. The user wants this to be a business they can pitch.
+
+Candidate groups (what the platform already does: WhatsApp/Telegram/iMessage, phone number = account, M-Pesa payments, reads/writes PDFs, spreadsheets and photos; reminders/alerts would need building):
+
+| Who | Money pain | What Holler would do |
+|---|---|---|
+| Small business owners (duka, salon, mama mboga, boda boda, Instagram/WhatsApp sellers) | "Am I making profit? Who owes me? Where did the money go?" | Record sales/expenses by chat, read the M-Pesa statement PDF and show real profit, track debts (madeni) and remind customers, receipts/invoices, KRA/eTIMS help |
+| Job and gig seekers | "Where's the next gig or job?" | Find openings/tenders, tailor CV and cover letter per job, deadline reminders |
+| Chama members/treasurers | "Who has paid, who hasn't?" | Contribution tracking, reminders, statements, minutes |
+| Farmers | "Where's the best price?" | Market prices across towns, buyer contacts, weather/input reminders |
+
+Recommendation given: small businesses ("Holler for Biashara"): measurable money value ("you made KES 18,400 profit; 3 customers owe KES 6,200; I reminded them"), uses what's already built, daily habit, fits Meta's WhatsApp policy (a specific business service), plausible price KES 100-300/month. Watch out for: existing Kenyan bookkeeping apps (edge = no new app, it reads your M-Pesa statement), trust/privacy around statements, no tax advice presented as certain, and unit economics: an AI answer costs about KES 3-13, so 300 messages a month (KES 1,000-3,900) breaks a KES 200 price; needs cheaper models for simple bookkeeping messages, short replies or per-plan limits, and pricing set after measuring real usage.
+
+Validation plan (before building more): 1) pick one group the user can reach in person (e.g. traders in one Mombasa market); 2) interview 15-20 without pitching ("How do you know if you made money this month? Who owes you? What takes your time?"); 3) hand-run test with 5-10 for 2 weeks on the current bot (send sales and M-Pesa statement, get weekly profit/debt summary; some of it done by hand behind the bot at first); 4) measure: do they keep sending without being pushed, did a reminder recover real money, do they pay with the real M-Pesa flow when the trial ends (payment is the proof, not "I like it").
+
+Pitch outline (after results): problem (millions of small businesses can't see real profit; owed money goes unrecovered), solution (Holler business assistant inside WhatsApp), why now (WhatsApp + M-Pesa everywhere, AI can read messages and statements), proof (pilot numbers: kept using, KES recovered, paid), business model (monthly Pro via M-Pesa; later business tier, lender partnerships since records help traders get loans), ask.
+
+Open question for the user (ask it first when this comes up again): which group do they personally know or can reach this week? Offered next: interview questions, the 2-week test plan, and a pitch page or deck. Until the user picks a group, don't build segment-specific features.
 
 ### Conversation management (planned, not built)
 
