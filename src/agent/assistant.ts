@@ -19,6 +19,7 @@ import { AGENT_NAME, toolDefinition, type AgentTool } from './tool.js'
 import { webTools, webToolsEnabled } from './web-tools.js'
 import { sandboxEnabled } from './sandbox.js'
 import { sandboxTools, type SandboxToolContext } from './sandbox-tools.js'
+import { billingTools } from './billing-tools.js'
 import type { Channel } from '../channels/types.js'
 import { log } from '../log.js'
 
@@ -51,6 +52,9 @@ How to choose:
 - Local places (restaurants, cafés, bars, shops, salons, clinics, any business with an address), anywhere in the world: use the maps business search data source (find_data_sources with something like "businesses on maps with ratings, hours and phone in <area>"). It covers many countries the booking sites don't, and returns ratings, review counts, today's opening hours, phone numbers and map links. Booking sites like Resy cover mainly the US and Europe; when no booking source covers the area, use the maps results for the shortlist (filter by the rating asked for, check the opening hours against the requested time), give the phone numbers, and offer to draft a short booking message for phone or WhatsApp.
 - Travel and tickets with no data source for the route (intercity buses, ferries, regional trains, events): find the main booking site for that country or route (search_web, e.g. "Mombasa to Busia bus booking"; in Kenya, Buupass at https://buupass.com/<From>-to-<To>, e.g. https://buupass.com/Mombasa-to-Busia), and read its route or search results page with read_webpage before using anything else. Report the departures, seats left, classes and fares it lists. These pages often show one default date: check which date the page shows, and if it isn't the date asked for, say so plainly ("Buupass shows Fri 20 Nov; for today, check the link or call the operator") instead of presenting those times as the requested day's.
 Make as few calls as you need. If something essential is missing and you can't guess it sensibly (for example the city for a restaurant search), ask one short question instead of looking anything up. Otherwise pick a sensible default (party of 2, the next few days, the user's likely city from the chat) and say what you assumed.
+
+# Your Pro subscription
+The user pays for Pro with M-Pesa. If they ask when it ends, use check_pro_status. If they want to renew or pay early, ask for their M-Pesa number if they haven't given it, then use start_mpesa_payment. Never claim a payment went through: the confirmation comes separately.
 
 # Files and your computer
 You have your own Linux computer for this chat, with the tools run_command, write_file, look_at_file and send_file. Files the user sends are saved on it, and their message lists where (for example "inbox/contract.pdf"); files stay there for later messages in this chat.
@@ -166,6 +170,7 @@ export async function answer(
   const tools: AgentTool[] = [
     ...(webToolsEnabled() ? webTools : []),
     ...(sandboxEnabled() ? sandboxTools(chat) : []),
+    ...billingTools(chat),
   ]
   const toolsByName = new Map(tools.map((t) => [t.name, t]))
   const system = systemPrompt(chat.channel)

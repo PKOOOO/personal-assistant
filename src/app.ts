@@ -10,6 +10,8 @@ import type { TelegramUpdate } from './telegram/api.js'
 import { parseTelegramUpdate } from './telegram/channel.js'
 import { isTelegramSecret } from './telegram/route.js'
 import { errorInfo, log } from './log.js'
+import { isPaystackSignature, paystackEnabled } from './billing/paystack.js'
+import { settlePayment } from './billing/pro.js'
 
 const app = new Hono()
 
@@ -66,6 +68,45 @@ app.post('/linq/webhook', async (c) => {
     return c.json({ error: 'Invalid signature' }, 401)
   }
   return routeMessage(c, 'imessage', message)
+})
+
+// Paystack payment results (set in the Paystack dashboard). Only charge.*
+// events matter: the payment is re-checked with Paystack's verify API and
+// credited once (src/billing/pro.ts), then the waiting mpesa-payment run is
+// woken. Answers 200 fast; a 5xx makes Paystack retry (for up to 72 hours),
+// and repeats are harmless.
+app.post('/webhooks/paystack', async (c) => {
+  if (!paystackEnabled()) {
+    log.error('webhook rejected', { platform: 'paystack', reason: 'Paystack not configured' })
+    return c.json({ error: 'Not configured' }, 503)
+  }
+  const body = await c.req.text()
+  if (!isPaystackSignature(body, c.req.header())) {
+    log.warn('webhook rejected', { platform: 'paystack', reason: 'invalid signature' })
+    return c.json({ error: 'Invalid signature' }, 401)
+  }
+
+  let event: { event?: string; data?: { reference?: string } }
+  try {
+    event = JSON.parse(body)
+  } catch {
+    return c.json({ error: 'Invalid JSON' }, 400)
+  }
+  const reference = event.data?.reference
+  if (!event.event?.startsWith('charge.') || !reference) return c.json({ ok: true, handled: false })
+
+  try {
+    const result = await settlePayment(reference)
+    log.info('payment webhook', { event: event.event, reference, outcome: result.status })
+    if (result.status === 'success' || result.status === 'failed') {
+      await inngest.send({ name: 'billing/payment.settled', data: { reference, status: result.status } })
+    }
+    return c.json({ ok: true, handled: result.status !== 'unknown' })
+  } catch (err) {
+    Sentry.captureException(err, { tags: { 'chat.platform': 'paystack' } })
+    log.error('payment webhook failed', { event: event.event, reference, ...errorInfo(err) })
+    return c.json({ error: 'Temporarily unavailable' }, 503)
+  }
 })
 
 async function routeMessage(c: Context, channel: string, message: InboundMessage | null) {

@@ -14,9 +14,9 @@ import {
   startDeviceAuthorization,
   type PollResult,
 } from '../auth/clerk-device.js'
-import { hasProPlan } from '../auth/clerk-billing.js'
+import { hasPro } from '../billing/pro.js'
 import { getChannel } from '../channels/index.js'
-import { messageEventId, sendUpgradeLink, type LinkRequestedEvent } from '../channels/router.js'
+import { handleUnpaid, messageEventId, type LinkRequestedEvent } from '../channels/router.js'
 import { isCommand, type SendOptions } from '../channels/types.js'
 import { findClerkUserId, linkAccount } from '../db/identities.js'
 import { log } from '../log.js'
@@ -118,18 +118,20 @@ export const linkAccountFn = inngest.createFunction(
     await forward(clerkUserId)
     return { status: 'linked', clerkUserId }
 
-    // Answer the message that started this, unless it was just a command like
-    // /start. Same Pro gate as the router: without Pro, send the upgrade link.
+    // Answer the message that started this. Same Pro gate as the router:
+    // without Pro, start the M-Pesa flow (price prompt, or the STK push if
+    // the message had a number). With Pro, forward it unless it was just a
+    // command like /start.
     async function forward(clerkUserId: string) {
-      if (isCommand(message)) return
-      const pro = await step.run('check-plan', () => hasProPlan(clerkUserId))
+      const pro = await step.run('check-plan', () => hasPro(clerkUserId))
       if (!pro) {
-        await step.run('reply-upgrade', async () => {
-          await sendUpgradeLink(message)
-          log.info('linked message not forwarded', { ...logAttrs, clerkUserId, reason: 'no Pro plan' })
+        await step.run('reply-payment', async () => {
+          const route = await handleUnpaid(message, clerkUserId)
+          log.info('linked message not forwarded', { ...logAttrs, clerkUserId, reason: 'no Pro', route })
         })
         return
       }
+      if (isCommand(message)) return
       await step.sendEvent('forward-message', {
         name: 'chat/message.authorized',
         id: messageEventId(message),
