@@ -14,7 +14,7 @@
 //
 // Env: WHATSAPP_ACCESS_TOKEN, WHATSAPP_PHONE_NUMBER_ID, WHATSAPP_APP_SECRET,
 // WHATSAPP_VERIFY_TOKEN (any string you choose, also entered in the dashboard),
-// optional WHATSAPP_GRAPH_VERSION (default v24.0).
+// optional WHATSAPP_GRAPH_VERSION (default v25.0).
 import { createHmac, timingSafeEqual } from 'node:crypto'
 import type { Channel, InboundAttachment, InboundMessage, ReplyTarget } from '../channels/types.js'
 import { toE164 } from '../auth/clerk-phone.js'
@@ -24,7 +24,7 @@ const env = () => ({
   phoneNumberId: process.env.WHATSAPP_PHONE_NUMBER_ID,
   appSecret: process.env.WHATSAPP_APP_SECRET,
   verifyToken: process.env.WHATSAPP_VERIFY_TOKEN,
-  version: process.env.WHATSAPP_GRAPH_VERSION ?? 'v24.0',
+  version: process.env.WHATSAPP_GRAPH_VERSION ?? 'v25.0',
 })
 
 export const whatsappEnabled = () => {
