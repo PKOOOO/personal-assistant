@@ -7,7 +7,7 @@ import { check, index, integer, pgTable, text, timestamp, uniqueIndex, uuid } fr
  * (e.g. `whatsapp`), add it here, run `npm run db:push`, and register an
  * adapter in src/channels/index.ts.
  */
-export const PLATFORMS = ['telegram', 'imessage'] as const
+export const PLATFORMS = ['telegram', 'imessage', 'whatsapp'] as const
 export type Platform = (typeof PLATFORMS)[number]
 
 /**

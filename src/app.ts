@@ -10,6 +10,7 @@ import { linqEnabled, parseLinqWebhook } from './linq/channel.js'
 import type { TelegramUpdate } from './telegram/api.js'
 import { parseTelegramUpdate } from './telegram/channel.js'
 import { isTelegramSecret } from './telegram/route.js'
+import { isWhatsAppSignature, parseWhatsAppWebhook, verifyWhatsAppSubscription, whatsappEnabled } from './whatsapp/channel.js'
 import { errorInfo, log } from './log.js'
 import { isPaystackSignature, paystackEnabled } from './billing/paystack.js'
 import { settlePayment } from './billing/pro.js'
@@ -109,6 +110,48 @@ app.post('/webhooks/paystack', async (c) => {
   } catch (err) {
     Sentry.captureException(err, { tags: { 'chat.platform': 'paystack' } })
     log.error('payment webhook failed', { event: event.event, reference, ...errorInfo(err) })
+    return c.json({ error: 'Temporarily unavailable' }, 503)
+  }
+})
+
+// WhatsApp (Meta Cloud API, app "holler"). GET: Meta's handshake when the
+// Callback URL is saved in the dashboard (echo hub.challenge if the verify
+// token matches). POST: signed message webhooks, possibly several messages at
+// once; each is routed like any other channel. A 5xx makes Meta retry (for up
+// to 7 days); event ids drop the duplicates.
+app.get('/whatsapp/webhook', (c) => {
+  const challenge = verifyWhatsAppSubscription(c.req.query())
+  if (challenge === null) {
+    log.warn('webhook rejected', { platform: 'whatsapp', reason: 'bad verify token' })
+    return c.text('Forbidden', 403)
+  }
+  return c.text(challenge)
+})
+
+app.post('/whatsapp/webhook', async (c) => {
+  if (!whatsappEnabled()) {
+    log.error('webhook rejected', { platform: 'whatsapp', reason: 'WhatsApp not configured' })
+    return c.json({ error: 'Not configured' }, 503)
+  }
+  const body = await c.req.text()
+  if (!isWhatsAppSignature(body, c.req.header('x-hub-signature-256'))) {
+    log.warn('webhook rejected', { platform: 'whatsapp', reason: 'invalid signature' })
+    return c.json({ error: 'Invalid signature' }, 401)
+  }
+  let messages: InboundMessage[]
+  try {
+    messages = parseWhatsAppWebhook(JSON.parse(body))
+  } catch {
+    return c.json({ error: 'Invalid JSON' }, 400)
+  }
+  if (messages.length === 0) return c.json({ ok: true, routed: [] })
+  try {
+    const routed = []
+    for (const message of messages) routed.push(await handleInbound(message))
+    return c.json({ ok: true, routed })
+  } catch (err) {
+    Sentry.captureException(err, { tags: { 'chat.platform': 'whatsapp' } })
+    log.error('webhook routing failed', { platform: 'whatsapp', ...errorInfo(err) })
     return c.json({ error: 'Temporarily unavailable' }, 503)
   }
 })

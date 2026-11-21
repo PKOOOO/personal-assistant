@@ -53,6 +53,7 @@ export const telegramChannel: Channel = {
     'Telegram shows plain text: no Markdown tables, no headings, no bold. Use short lines or a simple numbered list, and paste links as plain URLs.',
   maxDownloadBytes: TELEGRAM_MAX_DOWNLOAD,
   maxUploadBytes: TELEGRAM_MAX_UPLOAD,
+  canRequestPhone: true,
 
   async sendText(target, text, options = {}) {
     const parts = chunk(text)

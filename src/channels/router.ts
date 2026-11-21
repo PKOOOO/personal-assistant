@@ -77,11 +77,12 @@ export async function handleInbound(message: InboundMessage): Promise<RouteResul
         log.info('message routed', { ...attrs, route: 'signed-in', linked: true, clerkUserId })
         return 'signed-in'
       }
-    } else if (message.platform === 'telegram' && message.text.trim() !== '/connect') {
-      // Telegram doesn't share the number unless the user taps the button.
+    } else if (getChannel(message.platform).canRequestPhone && message.text.trim() !== '/connect') {
+      // Telegram (and WhatsApp users who hide their number behind a username)
+      // only share the number when the user taps the button.
       await sendBestEffort(
         message,
-        'Welcome! To set up your account, tap "Share my phone number" below. Your number is your account here and on iMessage.\n\nPrefer to sign in with Google or email? Send /connect.',
+        'Welcome! To set up your account, share your phone number with the button below. Your number is your account on WhatsApp, Telegram and iMessage.\n\nPrefer to sign in with Google or email? Send /connect.',
         { requestPhone: { label: 'Share my phone number' } }
       )
       log.info('message routed', { ...attrs, route: 'phone-requested', linked: false })

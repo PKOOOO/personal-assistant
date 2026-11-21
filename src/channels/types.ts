@@ -72,6 +72,8 @@ export interface Channel {
   /** Max size of a file the bot can download from / send to the user, in bytes. */
   maxDownloadBytes: number
   maxUploadBytes: number
+  /** Can ask the user to share their phone number with a button (Telegram, WhatsApp). */
+  canRequestPhone?: boolean
 
   sendText(target: ReplyTarget, text: string, options?: SendOptions): Promise<void>
   /** Best effort "typing..." indicator; never throws. */
