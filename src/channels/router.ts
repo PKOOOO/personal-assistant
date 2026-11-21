@@ -7,8 +7,9 @@
 //     -> the Clerk user for that number is found or created and linked, in the
 //     chat (src/auth/clerk-phone.ts); then routing continues below;
 //   - on Telegram without one -> a "Share my phone number" button;
-//   - iMessage from an Apple ID email -> how to text from the phone number.
-//   There is no browser sign-in (removed 2026-11-21).
+//   - otherwise (`/connect` on Telegram, iMessage from an Apple ID email) ->
+//     `chat/link.requested`, the browser sign-in link (link-account,
+//     src/inngest/link.ts).
 // - Linked senders without Pro (src/billing/pro.ts) never reach the agent:
 //   - a message containing a Kenyan phone number -> `billing/payment.requested`
 //     (mpesa-payment, src/inngest/payment.ts): M-Pesa STK push via Paystack;
@@ -33,14 +34,22 @@ export type AuthorizedMessageEvent = {
   data: { message: InboundMessage; clerkUserId: string }
 }
 
+export type LinkRequestedEvent = {
+  name: 'chat/link.requested'
+  id: string
+  // linkKey = "<platform>:<senderId>", one pending link per account.
+  data: { message: InboundMessage; linkKey: string }
+}
+
 // Event ids make Inngest drop duplicates when a platform resends a webhook.
 export const messageEventId = (m: InboundMessage) => `${m.platform}-message-${m.id}`
+const linkEventId = (m: InboundMessage) => `${m.platform}-link-${m.id}`
 
 export type RouteResult =
   | 'signed-in'
   | 'phone-requested'
   | 'chat/message.authorized'
-  | 'phone-required'
+  | 'chat/link.requested'
   | 'billing/payment.requested'
   | 'payment-pending'
   | 'payment-required'
@@ -68,23 +77,25 @@ export async function handleInbound(message: InboundMessage): Promise<RouteResul
         log.info('message routed', { ...attrs, route: 'signed-in', linked: true, clerkUserId })
         return 'signed-in'
       }
-    } else if (message.platform === 'telegram') {
+    } else if (message.platform === 'telegram' && message.text.trim() !== '/connect') {
       // Telegram doesn't share the number unless the user taps the button.
       await sendBestEffort(
         message,
-        'Welcome! To set up your account, tap "Share my phone number" below. Your number is your account here and on iMessage.',
+        'Welcome! To set up your account, tap "Share my phone number" below. Your number is your account here and on iMessage.\n\nPrefer to sign in with Google or email? Send /connect.',
         { requestPhone: { label: 'Share my phone number' } }
       )
       log.info('message routed', { ...attrs, route: 'phone-requested', linked: false })
       return 'phone-requested'
     } else {
-      // iMessage from an Apple ID email: no number to sign up with.
-      await sendBestEffort(
-        message,
-        "To use this assistant, text from your phone number instead of your email: on your iPhone go to Settings > Apps > Messages > Send & Receive, choose your phone number under \"Start new conversations from\", then start a new conversation with this number."
-      )
-      log.info('message routed', { ...attrs, route: 'phone-required', linked: false })
-      return 'phone-required'
+      // Browser sign-in (device flow): /connect on Telegram, iMessage from an Apple ID email.
+      const event: LinkRequestedEvent = {
+        name: 'chat/link.requested',
+        id: linkEventId(message),
+        data: { message, linkKey: `${message.platform}:${message.senderId}` },
+      }
+      await inngest.send(event)
+      log.info('message routed', { ...attrs, route: 'link-account', linked: false })
+      return event.name
     }
   }
 

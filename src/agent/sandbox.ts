@@ -12,7 +12,7 @@
 //
 // Daytona v0 SDK (`@daytona/sdk` 0.x, app.daytona.io). Needs DAYTONA_API_KEY.
 import { Daytona, type Sandbox } from '@daytona/sdk'
-import { isClerkUserId } from '../auth/clerk-ids.js'
+import { isClerkUserId } from '../auth/clerk-device.js'
 import { log } from '../log.js'
 
 export const sandboxEnabled = () => Boolean(process.env.DAYTONA_API_KEY)

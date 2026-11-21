@@ -80,3 +80,5 @@ export interface Channel {
   sendFile(target: ReplyTarget, file: OutboundFile, caption?: string): Promise<void>
 }
 
+/** Commands like /start: linking doesn't forward them to the agent. */
+export const isCommand = (m: InboundMessage) => m.text.trim().startsWith('/')

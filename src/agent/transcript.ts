@@ -10,7 +10,7 @@
 // redeploy.
 import { appendFile, mkdir, readFile } from 'node:fs/promises'
 import path from 'node:path'
-import { isClerkUserId } from '../auth/clerk-ids.js'
+import { isClerkUserId } from '../auth/clerk-device.js'
 import { log } from '../log.js'
 
 export type TranscriptEntry = {
