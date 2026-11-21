@@ -3,6 +3,7 @@ import * as Sentry from '@sentry/hono/node'
 import { serve } from 'inngest/hono'
 import { inngest } from './inngest/client.js'
 import { functions } from './inngest/functions.js'
+import { publicOrigin } from './inngest/sync.js'
 import { handleInbound } from './channels/router.js'
 import type { InboundMessage } from './channels/types.js'
 import { linqEnabled, parseLinqWebhook } from './linq/channel.js'
@@ -20,7 +21,10 @@ const app = new Hono()
 app.use(Sentry.sentry(app))
 
 // Inngest calls this endpoint to discover and run background functions.
-app.on(['GET', 'POST', 'PUT'], '/api/inngest', serve({ client: inngest, functions }))
+// serveOrigin: the public URL Inngest registers (also when the app syncs
+// itself over localhost on startup, src/inngest/sync.ts).
+const serveOrigin = process.env.INNGEST_DEV ? undefined : publicOrigin()
+app.on(['GET', 'POST', 'PUT'], '/api/inngest', serve({ client: inngest, functions, ...(serveOrigin && { serveOrigin }) }))
 
 // Chat channel webhooks. Each one verifies the request and turns it into an
 // InboundMessage (or null to ignore it); `routeMessage` then links unlinked
