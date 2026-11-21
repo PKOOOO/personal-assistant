@@ -34,6 +34,9 @@ export type PaymentSettledEvent = {
   data: { reference: string; status: string }
 }
 
+const placeholderEmail = (clerkUserId: string) =>
+  `${clerkUserId.toLowerCase()}@${process.env.RAILWAY_PUBLIC_DOMAIN ?? 'personal-assistant-production-b793.up.railway.app'}`
+
 /** Our Paystack reference for a payment started by a chat message (stable, so resends dedupe). */
 export const paymentReference = (platform: Platform, messageId: string) =>
   `pa-${platform}-${messageId}`.replace(/[^A-Za-z0-9.=-]/g, '-').slice(0, 90)
@@ -54,8 +57,9 @@ export const mpesaPayment = inngest.createFunction(
     const attrs = { reference, clerkUserId, platform }
 
     const started = await step.run('start-charge', async () => {
-      const email = await clerkUserEmail(clerkUserId)
-      if (!email) return { ok: false as const, reason: 'Your account has no email address, which the payment needs.' }
+      // Accounts created in the chat (by phone) have no email; Paystack needs
+      // one per charge, so they get a placeholder (no receipt emails).
+      const email = (await clerkUserEmail(clerkUserId)) ?? placeholderEmail(clerkUserId)
       await createPayment({ reference, clerkUserId, phone })
       const res = await chargeMpesa({ email, amount: PRO_PRICE_KES * 100, phone, reference })
       const status = res.data?.status

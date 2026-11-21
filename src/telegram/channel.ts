@@ -1,5 +1,6 @@
 // Telegram adapter for the shared channel layer (src/channels/types.ts).
 import type { Channel, InboundMessage, ReplyTarget } from '../channels/types.js'
+import { toE164 } from '../auth/clerk-phone.js'
 import {
   callTelegram,
   chunk,
@@ -30,6 +31,12 @@ export function parseTelegramUpdate(update: TelegramUpdate): InboundMessage | nu
     target: { chat_id: message.chat.id, message_thread_id: message.message_thread_id },
     replyRef: String(message.message_id),
     text: message.text ?? message.caption ?? '',
+    // Only the sender's own number counts (the request_contact button); a
+    // forwarded contact card of someone else has a different (or no) user_id.
+    verifiedPhone:
+      message.contact && message.contact.user_id === sender.id
+        ? (toE164(message.contact.phone_number) ?? undefined)
+        : undefined,
     attachments: getAttachments(message).map((a) => ({
       ref: a.fileId,
       name: a.name,
@@ -62,6 +69,16 @@ export const telegramChannel: Channel = {
         }),
         ...(last && options.link && {
           reply_markup: { inline_keyboard: [[{ text: options.link.label, url: options.link.url }]] },
+        }),
+        ...(last && options.requestPhone && {
+          reply_markup: {
+            keyboard: [[{ text: options.requestPhone.label, request_contact: true }]],
+            resize_keyboard: true,
+            one_time_keyboard: true,
+          },
+        }),
+        ...(last && options.removeKeyboard && !options.link && !options.requestPhone && {
+          reply_markup: { remove_keyboard: true },
         }),
       })
     }

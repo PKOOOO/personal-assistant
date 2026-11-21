@@ -39,6 +39,12 @@ export type InboundMessage = {
   replyRef?: string
   text: string
   attachments: InboundAttachment[]
+  /**
+   * The sender's phone number (E.164) when the platform vouches for it: the
+   * iMessage sender's own number, or a Telegram contact the user shared from
+   * their own account. Used for in-chat sign-up (src/auth/clerk-phone.ts).
+   */
+  verifiedPhone?: string
 }
 
 /** A platform-specific reply address; only the channel's adapter reads it. */
@@ -49,6 +55,10 @@ export type SendOptions = {
   replyToMessage?: InboundMessage
   /** A link to show with the text (a button on Telegram, a link card on iMessage). */
   link?: { label: string; url: string }
+  /** Ask the user to share their phone number with a button (Telegram); ignored elsewhere. */
+  requestPhone?: { label: string }
+  /** Remove a button keyboard shown earlier (Telegram); ignored elsewhere. */
+  removeKeyboard?: boolean
 }
 
 export type OutboundFile = { name: string; bytes: Buffer; mimeType?: string }

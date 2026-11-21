@@ -82,6 +82,9 @@ export function parseLinqWebhook(rawBody: string, headers: Record<string, string
     senderId: handle.includes('@') ? handle.toLowerCase() : handle,
     target: { chat_id: data.chat.id },
     replyRef: data.id,
+    // The sender's own iMessage number (not an Apple ID email). Linq flags a
+    // device it hasn't seen before for this number with device_status "new".
+    verifiedPhone: handle.startsWith('+') ? handle : undefined,
     text,
     attachments: data.parts.flatMap((p) =>
       p.type === 'media'

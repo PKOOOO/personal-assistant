@@ -21,6 +21,8 @@ export type TelegramMessage = {
   voice?: FileRef & { mime_type?: string }
   video_note?: FileRef
   animation?: NamedFile
+  // A shared contact. From the request_contact button, user_id is the sender's own id.
+  contact?: { phone_number: string; user_id?: number }
 }
 
 export type TelegramUpdate = {

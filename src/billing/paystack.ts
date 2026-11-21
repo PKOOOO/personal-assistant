@@ -103,5 +103,8 @@ export function findKenyanPhone(text: string): string | null {
   return null
 }
 
-/** "+254712345678" -> "0712 *** 678", for showing the user which number was charged. */
-export const maskPhone = (e164: string) => `0${e164.slice(4, 7)} *** ${e164.slice(-3)}`
+/** "+254712345678" -> "0712 *** 678" (other countries: "+1 *** 4567"), to show which number is meant. */
+export const maskPhone = (e164: string) =>
+  e164.startsWith('+254') && e164.length === 13
+    ? `0${e164.slice(4, 7)} *** ${e164.slice(-3)}`
+    : `${e164.slice(0, e164.length > 11 ? 4 : 2)} *** ${e164.slice(-4)}`
