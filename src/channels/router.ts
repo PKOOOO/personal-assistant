@@ -20,7 +20,7 @@
 //   that event runs the agent (chat, src/inngest/chat.ts).
 import { inngest } from '../inngest/client.js'
 import { findKenyanPhone, maskPhone, paystackEnabled } from '../billing/paystack.js'
-import { hasPro, pendingPayment, PRO_PERIOD_DAYS, proPriceText } from '../billing/pro.js'
+import { hasPro, markFailed, pendingPayment, PRO_PERIOD_DAYS, proPriceText } from '../billing/pro.js'
 import { paymentReference, type PaymentRequestedEvent } from '../inngest/payment.js'
 import { findOrCreatePhoneUser } from '../auth/clerk-phone.js'
 import { findClerkUserId, linkAccount } from '../db/identities.js'
@@ -149,15 +149,21 @@ export async function handleUnpaid(
     return 'payment-required'
   }
 
+  const phone = findKenyanPhone(message.text)
   const pending = await pendingPayment(clerkUserId)
   if (pending) {
-    await reply(
-      `I'm still waiting for your M-Pesa payment to ${maskPhone(pending.phone)}. Check your phone and enter your PIN, or wait a few minutes to try again.`
-    )
-    return 'payment-pending'
+    if (!phone || phone === pending.phone) {
+      await reply(
+        `I'm still waiting for your M-Pesa payment to ${maskPhone(pending.phone)}. Check your phone and enter your PIN. To pay from a different number, send that number.`
+      )
+      return 'payment-pending'
+    }
+    // A different number: give up on the waiting request and start a new one
+    // (mpesa-payment's singleton cancels the waiting run). If the old prompt
+    // is still paid, the webhook credits it anyway.
+    await markFailed(pending.reference, 'replaced by a new number')
   }
 
-  const phone = findKenyanPhone(message.text)
   if (phone) {
     const reference = paymentReference(message.platform, message.id)
     const event: PaymentRequestedEvent = {

@@ -45,9 +45,10 @@ export const mpesaPayment = inngest.createFunction(
   {
     id: 'mpesa-payment',
     triggers: [{ event: 'billing/payment.requested' }],
-    // One STK push at a time per user; extra requests while one runs are dropped
-    // (the router tells the user a payment is already waiting).
-    singleton: { key: 'event.data.clerkUserId', mode: 'skip' },
+    // One STK push at a time per user. A new request (the user sent a
+    // different number) cancels the waiting run; the router only sends one
+    // after marking the old payment as replaced.
+    singleton: { key: 'event.data.clerkUserId', mode: 'cancel' },
     retries: 2,
   },
   async ({ event, step }) => {

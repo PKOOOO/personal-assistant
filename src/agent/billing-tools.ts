@@ -7,7 +7,7 @@ import { z } from 'zod'
 import { defineTool, durable } from './tool.js'
 import type { SandboxToolContext } from './sandbox-tools.js'
 import { findKenyanPhone, maskPhone, paystackEnabled } from '../billing/paystack.js'
-import { pendingPayment, PRO_PERIOD_DAYS, proPriceText, proUntil } from '../billing/pro.js'
+import { markFailed, pendingPayment, PRO_PERIOD_DAYS, proPriceText, proUntil } from '../billing/pro.js'
 import { inngest } from '../inngest/client.js'
 import { paymentReference, type PaymentRequestedEvent } from '../inngest/payment.js'
 
@@ -39,7 +39,9 @@ export function billingTools(ctx: SandboxToolContext) {
         const e164 = findKenyanPhone(phone)
         if (!e164) return 'Error: that is not a Kenyan mobile number. Ask the user for their M-Pesa number (07... or 01...).'
         const pending = await pendingPayment(ctx.userId)
-        if (pending) return `A payment request to ${maskPhone(pending.phone)} is already waiting for the user's PIN. Tell them to check their phone.`
+        if (pending?.phone === e164) return `A payment request to ${maskPhone(pending.phone)} is already waiting for the user's PIN. Tell them to check their phone.`
+        // A different number replaces the waiting request.
+        if (pending) await markFailed(pending.reference, 'replaced by a new number')
         const reference = paymentReference(ctx.channel.platform, `renew-${randomUUID()}`)
         const event: PaymentRequestedEvent = {
           name: 'billing/payment.requested',
