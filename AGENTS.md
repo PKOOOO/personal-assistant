@@ -208,6 +208,8 @@ Pieces (reuse what exists):
 - Logs/privacy: never log ID numbers, PINs or names (log filing id, status, response code). Update `/privacy` (ID number sent to KRA for lookup, PIN/name/filing records kept, KRA as recipient). Check whether Holler must register with the Office of the Data Protection Commissioner (ODPC) as a data controller/processor.
 - Meta WhatsApp policy: fine (a specific service, not general AI).
 
+Status: email to apisupport@kra.go.ke sent by the user on 2026-11-22 (production access for a consumer nil-return service; fees/tax-agent rules; expected identity verification and consent record; approval requirements and timeline; whether an individual income-return API is planned). Waiting for KRA's reply.
+
 Order: 1) sandbox app on developer.go.ke (needs the user's OK; keys into `.env`), 2) `gavaconnect.ts` + a sandbox smoke script with KRA's sample data (ID 41789723, PIN A521040203F), 3) email apisupport@kra.go.ke (production approval for a consumer service filing for consenting users, fee allowed, tax-agent rules, verification KRA expects, ITR API plans), 4) DB + payment purpose + `kra-nil-return` function + conversation, tested end to end in sandbox with a stubbed or test payment, 5) production keys after KRA approves, then live test with the user's own PIN.
 
 Open decisions for the user: price (pay per filing, e.g. KES 50-100 like a cyber café, vs included in Pro, vs both), deterministic flow vs AI agent tools, and how strict identity checks are (KRA's PIN-by-ID lookup only needs an ID number, so someone who knows another person's ID could file for them; options: name match + phone, ask for date of birth or the ID serial number and compare where possible, KRA's guidance).
