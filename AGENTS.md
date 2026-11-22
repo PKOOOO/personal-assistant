@@ -157,6 +157,29 @@ Pitch outline (after results): problem (millions of small businesses can't see r
 
 Open question for the user (ask it first when this comes up again): which group do they personally know or can reach this week? Offered next: interview questions, the 2-week test plan, and a pitch page or deck. Until the user picks a group, don't build segment-specific features.
 
+#### "Done for you", not "how to" (discussed 2026-11-22; the user likes this direction)
+
+The user's requirement: users must not get "open this, click here" instructions (ChatGPT does that for free). Holler has to finish the job and come back with the result, and do things a chat-only AI (ChatGPT/Claude apps) can't: **move money** (M-Pesa prompts, collect, pay), **wait and act later** (watch for days, act the moment something changes), **reach other people** (message customers, call businesses, chase payments) and **message the user first** on WhatsApp when something happens. Holler already has money (Paystack STK push) and WhatsApp; waiting/acting later is Inngest scheduling (not built).
+
+Models the user liked (none built; don't build until asked):
+
+| Model | What the user says | What Holler does without them | Why ChatGPT can't |
+|---|---|---|---|
+| Collect my money (small businesses) | "Wanjiru owes me 1,500, Otieno 3,000" | Messages each debtor politely, sends an M-Pesa prompt or pay link, confirms payment, tells the owner "KES 4,500 collected" | It can't contact anyone or take money |
+| Watch and grab | "Tell me when Friday's Mombasa–Busia VIP seats open and book one" / "any new internship in data under 30k" | Watches for days, then books or alerts, with M-Pesa at the moment it opens | It can't wait or act later |
+| Calls for you (voice AI) | "Find a plumber free today in Kilimani under 2k" | Calls 5 businesses, compares, books one, reports back | It can't make phone calls |
+| Group money (chamas) | "Collect 500 from all 12 members by Friday" | Sends each member a prompt, reminds the ones who haven't paid, posts the statement to the group | It can't collect or follow up |
+
+Recommendation given: start with **Collect my money** (reuses the live STK push, the outcome is money, fits Meta's WhatsApp policy as a specific business service, weekly habit, leads to bookkeeping and loans). For students: Watch and grab (internships, bus seats, HELB/KUCCPS dates) and chama collection fit better.
+
+Government services (KRA, HELB, SHA/NHIF, eCitizen): doing them fully for users means logging in as them (storing passwords, OTPs, captchas, Data Protection Act, KRA rules on filing for others); one leak would end the business, so don't store users' government passwords. Two honest routes: official APIs where they exist (KRA GavaConnect, below), or "AI + human agent" (AI collects everything, a trained person submits with the user forwarding the OTP: a staffed service, like a cyber café on WhatsApp). Not the starting point.
+
+Research (web, 2026-11-22; confirm in the official docs before building):
+
+- **Paystack split payments in Kenya**: subaccounts (Create Subaccount with `settlement_bank` code from List Banks for Kenya) and saved or dynamic splits work in Kenya; Paystack's Kenya launch post says splits can go to bank accounts **or M-Pesa wallets** and settlement can be to a bank or M-Pesa wallet. M-Pesa fee 1.5% per transaction (cards 2.9% local / 3.8% international). Payouts follow the settlement schedule, not instantly. Not yet confirmed: the exact M-Pesa subaccount setup steps. Why it matters: for Collect my money / chamas the money must settle straight to the merchant or chama (subaccount), never be held in Holler's account (holding others' money points toward CBK payment-service licensing). Docs: https://paystack.com/docs/v2/ke/payments/split-payments/subaccounts, https://paystack.com/docs/v2/ke/payments/split-payments/multi-split.
+- **KRA GavaConnect** (KRA's official API platform, developer portal https://developer.go.ke, support apisupport@kra.go.ke): about 16 APIs (Dec 2025), including 10+ taxpayer checkers (PIN Checker, TCC Checker), a **NIL Return Filing API** and an e-slip status API; eTIMS/VAT tools being added. Access needs registration and following KRA's developer guidelines. Nil return filing was suspended in January 2026 and reinstated for 2025 returns filed after 31 March 2026. Not found yet: how the nil return API authorises filing for a taxpayer (consent/OTP rules) and whether third parties may use it commercially; read developer.go.ke and ask apisupport@kra.go.ke before building. If allowed, "Holler files your nil return" (students, unemployed, many young people) is a true done-for-you product with no password storage.
+- Still to check: debt-reminder rules (polite, limited reminders only to customers the business deals with; spammy messages get the WhatsApp number banned; harassment has legal consequences), and outbound WhatsApp to debtors needs approved utility templates (paid) since they haven't messaged Holler first.
+
 ### Real AI cost per reply (measured 2026-11-22) and TODOs
 
 Measured from the `chat turn answered` log lines in Railway's output (all 9 production replies so far), at Claude Sonnet 5.5 prices (US$2 / US$10 per million input / output tokens) and KES 130 = US$1:
