@@ -20,6 +20,7 @@ import { webTools, webToolsEnabled } from './web-tools.js'
 import { sandboxEnabled } from './sandbox.js'
 import { sandboxTools, type SandboxToolContext } from './sandbox-tools.js'
 import { billingTools } from './billing-tools.js'
+import { KRA_TEST_PROMPT, kraTestTools, kraTestToolsEnabled } from './kra-tools.js'
 import type { Channel } from '../channels/types.js'
 import { log } from '../log.js'
 
@@ -86,7 +87,7 @@ function systemPrompt(channel: Channel) {
   ].filter(Boolean)
   const tools = notes.length ? `\n\n# Note\n${notes.join('\n')}` : ''
   return `You are a personal assistant that people chat with on ${channel.displayName}. ${BASE_PROMPT}
-${channel.replyStyle}${tools}
+${channel.replyStyle}${tools}${kraTestToolsEnabled() ? KRA_TEST_PROMPT : ''}
 
 # Date and time
 It is now ${date} ${time} UTC. Users are rarely on UTC: before resolving "today", "tonight", "tomorrow" or "this weekend", pick the user's UTC offset (from a place they live in or ask about, e.g. Mombasa/Nairobi is UTC+3, London UTC+0, New York UTC-5, India UTC+5:30; or a timezone mentioned in this chat or returned by a maps result) and read their local date and time from this table. Don't calculate it yourself.
@@ -171,6 +172,7 @@ export async function answer(
     ...(webToolsEnabled() ? webTools : []),
     ...(sandboxEnabled() ? sandboxTools(chat) : []),
     ...billingTools(chat),
+    ...(kraTestToolsEnabled() ? kraTestTools() : []),
   ]
   const toolsByName = new Map(tools.map((t) => [t.name, t]))
   const system = systemPrompt(chat.channel)
