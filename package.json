@@ -8,7 +8,8 @@
     "set-webhook": "tsx --env-file=.env scripts/set-webhook.ts",
     "daytona-hello": "tsx --env-file=.env scripts/daytona-hello.ts",
     "db:studio": "tsx --env-file=.env node_modules/drizzle-kit/bin.cjs studio",
-    "db:push": "tsx --env-file=.env node_modules/drizzle-kit/bin.cjs push"
+    "db:push": "tsx --env-file=.env node_modules/drizzle-kit/bin.cjs push",
+    "kra-sandbox": "tsx --env-file=.env scripts/kra-sandbox.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^1.8.0",
